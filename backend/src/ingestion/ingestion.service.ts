@@ -2,7 +2,8 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
-import { SystemEventsService } from './system-events.service';
+import { SystemEventsService } from '../common/system-events.service';
+import { IndicatorsService } from '../indicators/indicators.service';
 import { RateBudgetService } from './rate-budget.service';
 import { CircuitBreakerRegistry } from './circuit-breaker';
 import { TwelveDataService, CandleRow } from './twelve-data.service';
@@ -55,6 +56,7 @@ export class IngestionService implements OnModuleInit {
     private readonly events: SystemEventsService,
     private readonly rateBudget: RateBudgetService,
     private readonly breakers: CircuitBreakerRegistry,
+    private readonly indicators: IndicatorsService,
   ) {}
 
   onModuleInit(): void {
@@ -140,6 +142,17 @@ export class IngestionService implements OnModuleInit {
       breaker.recordSuccess();
       this.lastSuccess[tf] = new Date().toISOString();
       this.logger.log(`ingested ${count} ${tf} candles`);
+
+      // INC-2: compute indicator snapshot for this timeframe. Failures here must
+      // not affect ingestion, so they are caught and logged separately.
+      try {
+        await this.indicators.computeForTimeframe(tf);
+      } catch (indErr) {
+        await this.events.warn(EVENT_SOURCE, `indicator compute failed for ${tf}`, {
+          timeframe: tf,
+          error: String(indErr),
+        });
+      }
     } catch (err) {
       breaker.recordFailure();
       await this.events.warn(EVENT_SOURCE, `twelvedata ${tf} fetch failed`, {
