@@ -4,6 +4,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { SystemEventsService } from '../common/system-events.service';
 import { IndicatorsService } from '../indicators/indicators.service';
+import { SignalsService } from '../signals/signals.service';
 import { RateBudgetService } from './rate-budget.service';
 import { CircuitBreakerRegistry } from './circuit-breaker';
 import { TwelveDataService, CandleRow } from './twelve-data.service';
@@ -57,6 +58,7 @@ export class IngestionService implements OnModuleInit {
     private readonly rateBudget: RateBudgetService,
     private readonly breakers: CircuitBreakerRegistry,
     private readonly indicators: IndicatorsService,
+    private readonly signals: SignalsService,
   ) {}
 
   onModuleInit(): void {
@@ -147,8 +149,11 @@ export class IngestionService implements OnModuleInit {
       // not affect ingestion, so they are caught and logged separately.
       try {
         await this.indicators.computeForTimeframe(tf);
+        // INC-3: run the signal engine for this timeframe (service decides which
+        // timeframes are traded). Isolated from ingestion the same way.
+        await this.signals.evaluateForTimeframe(tf);
       } catch (indErr) {
-        await this.events.warn(EVENT_SOURCE, `indicator compute failed for ${tf}`, {
+        await this.events.warn(EVENT_SOURCE, `post-ingestion compute failed for ${tf}`, {
           timeframe: tf,
           error: String(indErr),
         });

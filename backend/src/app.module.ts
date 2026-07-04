@@ -4,6 +4,7 @@ import { HealthModule } from './health/health.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { IndicatorsModule } from './indicators/indicators.module';
+import { SignalsModule } from './signals/signals.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { IndicatorsModule } from './indicators/indicators.module';
     HealthModule,
     SupabaseModule,
     IndicatorsModule,
+    SignalsModule,
     IngestionModule,
   ],
 })
