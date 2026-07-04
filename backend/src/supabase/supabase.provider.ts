@@ -1,4 +1,14 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { WebSocket as WsWebSocket } from 'ws';
+
+// @supabase/supabase-js initialises a realtime client that requires a global
+// WebSocket. Node 20 (our locked runtime) has no global WebSocket, so we
+// polyfill one from `ws`. The backend only uses the REST/PostgREST API — this
+// just satisfies the constructor; realtime is never actually used.
+const g = globalThis as { WebSocket?: unknown };
+if (typeof g.WebSocket === 'undefined') {
+  g.WebSocket = WsWebSocket;
+}
 
 export const SUPABASE_CLIENT = 'SUPABASE_CLIENT';
 
