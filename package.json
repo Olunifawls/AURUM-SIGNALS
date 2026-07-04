@@ -1,0 +1,18 @@
+{
+  "name": "aurum-signals",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AURUM SIGNALS — personal gold (XAU/USD) analysis & signal platform. Analysis tool, not financial advice. Personal use only.",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend",
+    "test": "npm run test --workspace=backend && npm run test --workspace=frontend"
+  },
+  "engines": {
+    "node": ">=20 <21"
+  }
+}
