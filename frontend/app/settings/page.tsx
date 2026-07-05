@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiGet, updateRiskPct } from '../../lib/api';
-import { TierStatus } from '../../lib/types';
+import { apiGet, updateAccount, updateRiskPct } from '../../lib/api';
+import { Settings, TierStatus } from '../../lib/types';
 
 const ACK_STRING = 'I ACCEPT THE DRAWDOWN RISK';
 const HARD_CEILING = 3.0;
@@ -25,6 +25,7 @@ export default function SettingsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [ackInput, setAckInput] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [acctMsg, setAcctMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const loadTier = useCallback(async () => {
     try {
@@ -33,9 +34,30 @@ export default function SettingsPage() {
       /* ignore */
     }
   }, []);
+  const loadSettings = useCallback(async () => {
+    try {
+      const s = await apiGet<Settings>('api/settings');
+      setAccountSize(String(s.account_size));
+      setCcy(s.account_ccy);
+      setRiskPct(s.risk_pct);
+    } catch {
+      /* keep defaults */
+    }
+  }, []);
   useEffect(() => {
     void loadTier();
-  }, [loadTier]);
+    void loadSettings();
+  }, [loadTier, loadSettings]);
+
+  async function saveAccount() {
+    setAcctMsg(null);
+    try {
+      const res = await updateAccount(Number(accountSize), ccy);
+      setAcctMsg({ ok: true, text: `Saved: ${res.account_ccy} ${res.account_size}.` });
+    } catch (e) {
+      setAcctMsg({ ok: false, text: (e as Error).message });
+    }
+  }
 
   const isTier2 = riskPct > 2.0;
   const locked = isTier2 && !tier?.tier2_unlocked;
@@ -109,9 +131,17 @@ export default function SettingsPage() {
             >
               <option>GBP</option>
               <option>USD</option>
-              <option>EUR</option>
             </select>
           </label>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            onClick={() => void saveAccount()}
+            className="rounded bg-neutral-200 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-white"
+          >
+            Save account
+          </button>
+          {acctMsg && <span className={`text-sm ${acctMsg.ok ? 'text-green-400' : 'text-red-400'}`}>{acctMsg.text}</span>}
         </div>
 
         <div className="mt-4 text-sm">
@@ -150,8 +180,8 @@ export default function SettingsPage() {
         </button>
         {msg && <p className={`mt-2 text-sm ${msg.ok ? 'text-green-400' : 'text-red-400'}`}>{msg.text}</p>}
         <p className="mt-2 text-xs text-neutral-600">
-          Only risk % is persisted through the token-guarded API. Writes route through a server-side
-          proxy; the admin token never reaches the browser.
+          Account and risk settings persist through token-guarded endpoints. All writes route through
+          a server-side proxy; the admin token never reaches the browser.
         </p>
       </section>
 

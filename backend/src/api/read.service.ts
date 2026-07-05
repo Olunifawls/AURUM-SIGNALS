@@ -24,6 +24,33 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+interface RawSignalRow {
+  created_at: string;
+  resolved_at: string | null;
+  status: string;
+  entry_price: string | number;
+  stop_loss: string | number;
+  pips_result: string | number | null;
+  track: string;
+}
+
+export interface PerformanceHeadline {
+  total_signals: number;
+  resolved: number;
+  wins: number;
+  losses: number;
+  expired: number;
+  win_rate: number | null;
+  avg_r_per_trade: number | null;
+  cumulative_r: number;
+  max_losing_streak: number;
+}
+
+interface PerformanceHeadlineBlock {
+  daily: ReturnType<typeof computePerformanceDaily>;
+  headline: PerformanceHeadline;
+}
+
 @Injectable()
 export class ReadService {
   constructor(@Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null) {}
@@ -63,28 +90,11 @@ export class ReadService {
    * (computePerformanceDaily / maxLosingStreak) over the signals table so the
    * numbers cannot diverge from the tracker's definitions.
    */
-  async performance(): Promise<{
-    daily: ReturnType<typeof computePerformanceDaily>;
-    headline: {
-      total_signals: number;
-      resolved: number;
-      wins: number;
-      losses: number;
-      expired: number;
-      win_rate: number | null;
-      avg_r_per_trade: number | null;
-      cumulative_r: number;
-      max_losing_streak: number;
-    };
-    note: string;
-  }> {
-    const { data, error } = await this.db()
-      .from('signals')
-      .select('created_at,resolved_at,status,entry_price,stop_loss,pips_result')
-      .eq('symbol', SYMBOL);
-    if (error) throw new Error(`performance query failed: ${error.message}`);
-    const rows = data ?? [];
-
+  /**
+   * Headline stats (+ daily rollup) computed over a set of raw signal rows via
+   * the INC-4 pure functions, so the numbers cannot diverge from the tracker.
+   */
+  private computeBlock(rows: RawSignalRow[]): { daily: PerformanceHeadlineBlock['daily']; headline: PerformanceHeadline } {
     const rollup: RollupInput[] = rows.map((r) => {
       const risk = Math.abs(Number(r.entry_price) - Number(r.stop_loss));
       const resolved = r.resolved_at != null;
@@ -103,7 +113,6 @@ export class ReadService {
     const resolved = wins + losses + expired;
     const cumulative_r = daily.length ? daily[daily.length - 1].cumulative_r : 0;
 
-    // max losing streak over resolved signals in resolution-time order.
     const resolvedStatuses = rows
       .filter((r) => r.resolved_at != null)
       .sort((a, b) => ((a.resolved_at as string) < (b.resolved_at as string) ? -1 : 1))
@@ -122,6 +131,34 @@ export class ReadService {
         cumulative_r,
         max_losing_streak: maxLosingStreak(resolvedStatuses),
       },
+    };
+  }
+
+  /**
+   * performance_daily rollups + headline stats over track='core' ONLY, plus a
+   * separate `experimental` block for track='experimental'. The core headline
+   * NEVER includes experimental signals.
+   */
+  async performance(): Promise<{
+    daily: PerformanceHeadlineBlock['daily'];
+    headline: PerformanceHeadline;
+    experimental: PerformanceHeadline;
+    note: string;
+  }> {
+    const { data, error } = await this.db()
+      .from('signals')
+      .select('created_at,resolved_at,status,entry_price,stop_loss,pips_result,track')
+      .eq('symbol', SYMBOL);
+    if (error) throw new Error(`performance query failed: ${error.message}`);
+    const rows = (data ?? []) as RawSignalRow[];
+
+    const core = this.computeBlock(rows.filter((r) => r.track !== 'experimental'));
+    const experimental = this.computeBlock(rows.filter((r) => r.track === 'experimental'));
+
+    return {
+      daily: core.daily,
+      headline: core.headline,
+      experimental: experimental.headline,
       note: FEED_PRICE_NOTE,
     };
   }

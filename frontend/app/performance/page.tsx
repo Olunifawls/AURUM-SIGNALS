@@ -67,9 +67,8 @@ export default function PerformancePage() {
   useSignalsRealtime(load);
 
   const core = useMemo(() => signals.filter((s) => s.track !== 'experimental'), [signals]);
-  const experimental = useMemo(() => signals.filter((s) => s.track === 'experimental'), [signals]);
 
-  // Max drawdown (in R) from the daily cumulative-R curve.
+  // Max drawdown (in R) from the daily cumulative-R curve (core-only, from the API).
   const maxDrawdown = useMemo(() => {
     let peak = 0;
     let dd = 0;
@@ -80,9 +79,9 @@ export default function PerformancePage() {
     return dd;
   }, [perf]);
 
-  // Current losing streak (trailing consecutive HIT_SL by resolution time).
+  // Current losing streak (trailing consecutive HIT_SL by resolution time), core-only.
   const currentStreak = useMemo(() => {
-    const resolved = signals
+    const resolved = core
       .filter((s) => s.resolved_at != null)
       .sort((a, b) => ((a.resolved_at as string) < (b.resolved_at as string) ? 1 : -1));
     let n = 0;
@@ -91,7 +90,7 @@ export default function PerformancePage() {
       else break;
     }
     return n;
-  }, [signals]);
+  }, [core]);
 
   const byTf = useMemo(
     () => ['15min', '1h', '4h', '1day'].map((tf) => segment(core.filter((s) => s.timeframe === tf), tf)),
@@ -142,13 +141,16 @@ export default function PerformancePage() {
           Excluded from the headline numbers above. Higher-risk, faster track — shown separately for
           transparency.
         </p>
-        <div className="mt-3">
-          <Breakdown
-            title=""
-            segments={[segment(experimental, 'experimental')]}
-            emptyLabel="No experimental signals logged yet."
-          />
-        </div>
+        {perf && perf.experimental.total_signals > 0 ? (
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Card label="Win rate" value={fmtPct(perf.experimental.win_rate)} />
+            <Card label="Signals" value={`${perf.experimental.total_signals}`} sub={`${perf.experimental.resolved} resolved`} />
+            <Card label="Cumulative R" value={fmtSignedR(perf.experimental.cumulative_r)} accent={perf.experimental.cumulative_r >= 0} />
+            <Card label="Max losing streak" value={`${perf.experimental.max_losing_streak}`} />
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-neutral-600">No experimental signals logged yet.</p>
+        )}
       </section>
     </div>
   );

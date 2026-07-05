@@ -33,6 +33,18 @@ export interface SignalRow {
   notes: string | null;
 }
 
+export interface PerformanceHeadline {
+  total_signals: number;
+  resolved: number;
+  wins: number;
+  losses: number;
+  expired: number;
+  win_rate: number | null;
+  avg_r_per_trade: number | null;
+  cumulative_r: number;
+  max_losing_streak: number;
+}
+
 export interface PerformanceResponse {
   daily: Array<{
     day: string;
@@ -44,18 +56,16 @@ export interface PerformanceResponse {
     avg_rr_achieved: number | null;
     cumulative_r: number;
   }>;
-  headline: {
-    total_signals: number;
-    resolved: number;
-    wins: number;
-    losses: number;
-    expired: number;
-    win_rate: number | null;
-    avg_r_per_trade: number | null;
-    cumulative_r: number;
-    max_losing_streak: number;
-  };
+  headline: PerformanceHeadline; // core track ONLY
+  experimental: PerformanceHeadline; // track='experimental'
   note: string;
+}
+
+export interface Settings {
+  account_size: number;
+  account_ccy: string;
+  risk_pct: number;
+  current_tier: number;
 }
 
 export interface IndicatorSnapshot {

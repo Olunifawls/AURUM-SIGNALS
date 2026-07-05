@@ -79,7 +79,7 @@ Signal history, newest first.
 Current `OPEN` signals only. Same object shape as above; array.
 
 ### `GET /api/performance`
-`performance_daily` rollups + headline stats. Headline is recomputed from the `signals` table via the **same INC-4 pure functions** the tracker uses (`computePerformanceDaily`, `maxLosingStreak`) so it cannot diverge. Zero-state returns empty `daily` and zero/null headline (not an error).
+`performance_daily` rollups + headline stats **over `track='core'` ONLY**, plus a separate `experimental` block for `track='experimental'`. Headline, `daily`, and `experimental` are recomputed from the `signals` table via the **same INC-4 pure functions** the tracker uses (`computePerformanceDaily`, `maxLosingStreak`) so they cannot diverge. The core headline NEVER includes experimental signals. Zero-state returns empty `daily` and zero/null headline (not an error).
 ```json
 {
   "daily": [
@@ -101,9 +101,19 @@ Current `OPEN` signals only. Same object shape as above; array.
     "cumulative_r": 0,
     "max_losing_streak": 0
   },
+  "experimental": {
+    "total_signals": 0,
+    "resolved": 0,
+    "wins": 0, "losses": 0, "expired": 0,
+    "win_rate": null,
+    "avg_r_per_trade": null,
+    "cumulative_r": 0,
+    "max_losing_streak": 0
+  },
   "note": "Results use data-feed prices, before spread and slippage."
 }
 ```
+`daily` and `headline` are core-only; `experimental` carries the same measured stats for the 15min experimental track.
 
 ### `GET /api/market/snapshot`
 Latest price + latest indicator snapshot per timeframe + latest FX + freshness.
@@ -125,6 +135,12 @@ Any timeframe with no snapshot yet is `null`.
 ### `GET /api/sizing/tier-status` (public read)
 ```json
 { "resolved_count": 0, "cumulative_r": 0, "tier2_unlocked": false, "progress": "0/50" }
+```
+
+### `GET /api/settings` (public read, non-sensitive)
+Current money-management settings.
+```json
+{ "account_size": 2000, "account_ccy": "GBP", "risk_pct": 1.0, "current_tier": 1 }
 ```
 
 ---
@@ -152,12 +168,14 @@ All are state-changing / credit-consuming / Telegram / settings triggers. Missin
 | `POST /api/track/run` | Resolve OPEN signals + rebuild `performance_daily` | — |
 | `POST /api/alerts/test` | Send a Telegram test alert | `{ "type"?: "signal"\|"resolution"\|"admin" }` |
 | `POST /api/settings/risk-pct` | Update `user_settings.risk_pct` (tier-enforced) | `{ "risk_pct": number, "acknowledgment"?: string }` |
+| `POST /api/settings/account` | Update `account_size` + `account_ccy` (validates `>0` and `GBP`/`USD`) | `{ "account_size": number, "account_ccy": "GBP"\|"USD" }` |
 
 Representative success responses:
 - `/api/ingest/seed` → `{ "ok": true, "health": { ... } }`
 - `/api/signals/evaluate/:tf` → `{ "timeframe": "1h", "evaluated": true, "fired": false, "reason": "trend_factors_disagree", "track": "core" }`
 - `/api/track/run` → `{ "openBefore": 0, "resolved": 0, "performanceDays": 0, "resolutions": [] }`
 - `/api/settings/risk-pct` → `{ "ok": true, "tier": 1, "risk_pct": 1.5 }`
+- `/api/settings/account` → `{ "ok": true, "account_size": 5000, "account_ccy": "USD" }`
 
 ---
 

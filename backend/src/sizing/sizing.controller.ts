@@ -32,9 +32,20 @@ export class SizingController {
     return this.sizing.tierStatus();
   }
 
+  @Get('settings')
+  settings() {
+    return this.sizing.getSettings();
+  }
+
   @UseGuards(AdminTokenGuard)
   @Post('settings/risk-pct')
   updateRiskPct(@Body() body: { risk_pct: number; acknowledgment?: string }) {
     return this.sizing.updateRiskPct(body.risk_pct, body.acknowledgment);
+  }
+
+  @UseGuards(AdminTokenGuard)
+  @Post('settings/account')
+  updateAccount(@Body() body: { account_size: number; account_ccy: string }) {
+    return this.sizing.updateAccount(body.account_size, body.account_ccy);
   }
 }

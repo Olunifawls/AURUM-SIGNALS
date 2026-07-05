@@ -54,6 +54,32 @@ export class SizingService {
     };
   }
 
+  /** Public read of the (non-sensitive) money-management settings. */
+  async getSettings(): Promise<UserSettings> {
+    return this.getUserSettings();
+  }
+
+  /** Update account size + currency (admin-guarded). Validates size > 0 and ccy in GBP/USD. */
+  async updateAccount(
+    accountSize: number,
+    accountCcy: string,
+  ): Promise<{ ok: true; account_size: number; account_ccy: string }> {
+    if (!this.supabase) throw new Error('Supabase client not configured');
+    if (!Number.isFinite(accountSize) || accountSize <= 0) {
+      throw new BadRequestException('account_size must be a positive number');
+    }
+    if (accountCcy !== 'GBP' && accountCcy !== 'USD') {
+      throw new BadRequestException("account_ccy must be one of ['GBP','USD']");
+    }
+    const { error } = await this.supabase
+      .from('user_settings')
+      .update({ account_size: accountSize, account_ccy: accountCcy, updated_at: new Date().toISOString() })
+      .eq('id', 1);
+    if (error) throw new Error(`user_settings update failed: ${error.message}`);
+    this.logger.log(`account updated to ${accountCcy} ${accountSize}`);
+    return { ok: true, account_size: accountSize, account_ccy: accountCcy };
+  }
+
   private async latestGbpUsd(): Promise<number | null> {
     if (!this.supabase) throw new Error('Supabase client not configured');
     const { data, error } = await this.supabase

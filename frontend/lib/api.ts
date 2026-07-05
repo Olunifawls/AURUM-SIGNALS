@@ -21,3 +21,17 @@ export async function updateRiskPct(
   if (!res.ok) throw new Error(data?.message || `update failed (${res.status})`);
   return data;
 }
+
+export async function updateAccount(
+  account_size: number,
+  account_ccy: string,
+): Promise<{ ok: true; account_size: number; account_ccy: string }> {
+  const res = await fetch('/api/settings/account', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ account_size, account_ccy }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.message || `update failed (${res.status})`);
+  return data;
+}
