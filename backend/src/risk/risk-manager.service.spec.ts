@@ -110,7 +110,7 @@ describe('(g) loss baseline from equity_snapshots (00:00 UK reference)', () => {
     });
     const { client, inserted } = makeSupabase({
       ...benignHandlers,
-      equity_snapshots: (s: any) => ({ data: [{ equity: 2000 }] }), // reference = 2000
+      equity_snapshots: () => ({ data: [{ equity: 2000 }] }), // reference = 2000
     });
     const svc = new RiskManagerService(client, adapter, new TradingStateService());
 
