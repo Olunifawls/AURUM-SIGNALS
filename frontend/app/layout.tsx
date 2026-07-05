@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import Nav from '../components/Nav';
 import Footer from '../components/Footer';
+import ModeBanner from '../components/ModeBanner';
 
 export const metadata: Metadata = {
   title: 'AURUM SIGNALS',
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen bg-neutral-950 text-neutral-100 antialiased">
         <div className="flex min-h-screen flex-col">
+          <ModeBanner />
           <Nav />
           <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">{children}</main>
           <Footer />

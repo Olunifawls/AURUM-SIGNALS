@@ -114,3 +114,76 @@ export interface Candle {
   low: number;
   close: number;
 }
+
+// --- L2 Execution page (INC-5) ---
+export type TradingMode = 'demo' | 'live';
+
+export interface ExecState {
+  mode: TradingMode;
+  autoTradeEnabled: boolean;
+  equity: number | null;
+  ccy: string;
+  openPositions: number;
+  todayPnl: number | null;
+  weeklyPnl: number | null;
+  dailyLossBudget: { usedPct: number; maxPct: number; remainingPct: number };
+  weeklyLossBudget: { usedPct: number; maxPct: number; remainingPct: number };
+  halts: { halt_type: string; reason: string | null; requires_manual: boolean; scope: string; clears_at: string | null }[];
+  tier: { riskPerTradePct: number; currentTier: number; resolvedDemoTrades: number; tier2Unlocked: boolean };
+}
+
+export interface ExecPosition {
+  id: string;
+  opened_at: string;
+  timeframe: string | null;
+  side: Direction;
+  units: number | string;
+  entry_price: number | string;
+  stop_loss: number | string;
+  take_profit: number | string;
+  broker_trade_id: string | null;
+  slippage_points: number | string | null;
+  risk_pct_actual: number | string | null;
+  achieved_rr: number | string | null;
+  live_pl: number | null;
+}
+
+export interface ExecOrder {
+  id: string;
+  created_at: string;
+  side: Direction;
+  units: number | string;
+  requested_price: number | string | null;
+  filled_price: number | string | null;
+  status: string;
+  reason: string | null;
+  slippage_points: number | string | null;
+  achieved_rr: number | string | null;
+  realized_r: number | string | null;
+  position_status: string | null;
+  close_reason: string | null;
+}
+
+export interface ExecEquityPoint {
+  ts: string;
+  equity: number | string;
+  balance: number | string;
+  high_water_mark: number | string | null;
+  snapshot_type: string | null;
+  open_positions: number | null;
+}
+
+export interface ExecEquity {
+  snapshots: ExecEquityPoint[];
+  dailyRef: number | null;
+  weeklyRef: number | null;
+  hwm: number | null;
+}
+
+export interface ExecRiskEvent {
+  created_at: string;
+  event_type: string;
+  severity: string;
+  message: string;
+  mode: string | null;
+}

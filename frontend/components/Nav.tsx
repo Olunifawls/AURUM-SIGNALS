@@ -7,6 +7,7 @@ const LINKS = [
   { href: '/', label: 'Overview' },
   { href: '/history', label: 'History' },
   { href: '/performance', label: 'Performance' },
+  { href: '/execution', label: 'Execution' },
   { href: '/settings', label: 'Settings' },
 ];
 
