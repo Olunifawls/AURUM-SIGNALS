@@ -5,6 +5,7 @@ import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 import { AlertsService } from '../alerts/alerts.service';
 import { SYMBOL } from '../ingestion/ingestion.constants';
+import { CircuitBreakerService } from '../killswitch/circuit-breaker.service';
 import { ExecutionReadinessService } from './readiness.service';
 import { inferCloseReason, realizedR } from './exec-util';
 
@@ -35,6 +36,7 @@ export class ReconciliationService implements OnModuleInit {
     @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
     private readonly readiness: ExecutionReadinessService,
     private readonly alerts: AlertsService,
+    private readonly breaker: CircuitBreakerService,
   ) {}
 
   /** Startup reconcile (D7/B6): full reconcile BEFORE the order path is enabled. */
@@ -147,6 +149,8 @@ export class ReconciliationService implements OnModuleInit {
         unknownRecorded++;
         mismatches++;
         await this.logMismatch('unknown_broker_trade_recorded', `recorded unknown broker trade ${bt.id}`, { tradeId: bt.id });
+        // §6: a reconcile mismatch involving an unexpected fill escalates to a halt.
+        await this.breaker.escalateUnexpectedFill(bt.id);
       }
     }
 

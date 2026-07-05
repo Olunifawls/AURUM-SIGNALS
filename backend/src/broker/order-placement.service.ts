@@ -7,6 +7,7 @@ import {
   IBrokerAdapter,
   Side,
 } from './broker.interface';
+import { scrubSecrets } from '../killswitch/scrub';
 
 export interface PlaceForSignalInput {
   signalId: string;
@@ -129,11 +130,11 @@ export class OrderPlacementService {
         broker_trade_id: result.brokerTradeId ?? null,
         filled_price: result.fillPrice ?? null,
         filled_at: new Date().toISOString(),
-        meta: { raw: result.raw },
+        meta: { raw: scrubSecrets(result.raw) },
       });
       return { placed: true, orderId, status: 'FILLED', brokerTradeId: result.brokerTradeId, fillPrice: result.fillPrice };
     }
-    await this.update(orderId, { status: 'REJECTED', reason: result.reason ?? 'rejected', meta: { raw: result.raw } });
+    await this.update(orderId, { status: 'REJECTED', reason: result.reason ?? 'rejected', meta: { raw: scrubSecrets(result.raw) } });
     return { placed: false, orderId, status: 'REJECTED', reason: result.reason };
   }
 

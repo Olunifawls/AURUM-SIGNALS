@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { BrokerModule } from '../broker/broker.module';
+import { AlertsModule } from '../alerts/alerts.module';
 import { RiskManagerService } from './risk-manager.service';
 import { TradingStateService } from './trading-state.service';
 
@@ -10,7 +11,7 @@ import { TradingStateService } from './trading-state.service';
  * / volatility trigger / Telegram (INC-4), NO live mode.
  */
 @Module({
-  imports: [SupabaseModule, BrokerModule],
+  imports: [SupabaseModule, BrokerModule, AlertsModule],
   providers: [RiskManagerService, TradingStateService],
   exports: [RiskManagerService, TradingStateService],
 })

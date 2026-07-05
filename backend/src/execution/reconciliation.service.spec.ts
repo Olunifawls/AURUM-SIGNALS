@@ -37,13 +37,14 @@ function makeAdapter(over: any = {}) {
 }
 
 const alerts = { sendAdminError: jest.fn(async () => undefined) } as any;
+const breaker = { escalateUnexpectedFill: jest.fn(async () => undefined) } as any;
 const openPos = { id: 'pos-1', broker_trade_id: 'T1', entry_price: 2000, stop_loss: 1990, take_profit: 2020, side: 'BUY', units: 2.8 };
 
 describe('(b) RECONCILE-DETECTS-CLOSE (simulated)', () => {
   it('a DB-open position the broker shows closed is marked CLOSED with realized P/L and R', async () => {
     const { client, updated } = makeSupabase([openPos]);
     const adapter = makeAdapter(); // getOpenTrades -> [] (T1 gone), getTrade -> CLOSED @ 2020
-    const svc = new ReconciliationService(client, adapter, new ExecutionReadinessService(), alerts);
+    const svc = new ReconciliationService(client, adapter, new ExecutionReadinessService(), alerts, breaker);
 
     const res = await svc.reconcile();
     expect(res.closedByBroker).toBe(1);
@@ -57,7 +58,7 @@ describe('(c) RECONCILIATION NEVER WRITES TO THE BROKER', () => {
   it('a reconcile pass makes zero place/close broker calls', async () => {
     const { client } = makeSupabase([openPos]);
     const adapter = makeAdapter();
-    const svc = new ReconciliationService(client, adapter, new ExecutionReadinessService(), alerts);
+    const svc = new ReconciliationService(client, adapter, new ExecutionReadinessService(), alerts, breaker);
 
     await svc.reconcile();
     expect(adapter.placeMarketOrder).not.toHaveBeenCalled();
@@ -69,7 +70,7 @@ describe('(c) RECONCILIATION NEVER WRITES TO THE BROKER', () => {
     const adapter = makeAdapter({
       getOpenTrades: jest.fn(async () => [{ id: 'T9', instrument: 'XAU_USD', side: 'BUY', units: 1, price: 2000, unrealizedPl: 0, clientTag: 'aurum-x' }]),
     });
-    const svc = new ReconciliationService(client, adapter, new ExecutionReadinessService(), alerts);
+    const svc = new ReconciliationService(client, adapter, new ExecutionReadinessService(), alerts, breaker);
 
     const res = await svc.reconcile();
     expect(res.unknownRecorded).toBe(1);

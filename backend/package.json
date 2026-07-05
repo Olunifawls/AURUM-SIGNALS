@@ -13,7 +13,8 @@
     "backtest": "ts-node --transpile-only src/backtest/run-backtest.ts",
     "telegram:chatid": "ts-node --transpile-only src/alerts/get-chatid.ts",
     "broker:demo": "ts-node --transpile-only src/broker/demo-check.ts",
-    "exec:demo": "ts-node --transpile-only src/execution/exec-check.ts"
+    "exec:demo": "ts-node --transpile-only src/execution/exec-check.ts",
+    "cmd:demo": "ts-node --transpile-only src/killswitch/cmd-check.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",

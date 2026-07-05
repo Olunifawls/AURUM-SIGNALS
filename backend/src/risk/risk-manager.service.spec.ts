@@ -43,7 +43,9 @@ const benignHandlers = {
   fx_rates: () => ({ data: [{ rate: 1.25 }] }),
   positions: (s: any) => (s.opts?.head ? { count: 0 } : { data: [] }),
   equity_snapshots: (s: any) => (s.filters.length ? { data: [{ equity: 2000 }] } : { data: [{ equity: 2000 }] }),
+  system_halts: () => ({ data: [] }),
 };
+const noAlerts = { sendAdminError: async () => false, send: async () => true } as any;
 
 describe('(a) RiskManagerService logs rejections/warnings to risk_events', () => {
   const OLD = { ...process.env };
@@ -64,7 +66,7 @@ describe('(a) RiskManagerService logs rejections/warnings to risk_events', () =>
 
   it('a rejection inserts a risk_events row with the reason', async () => {
     const { client, inserted } = makeSupabase({});
-    const svc = new RiskManagerService(client, makeAdapter(), new TradingStateService());
+    const svc = new RiskManagerService(client, makeAdapter(), new TradingStateService(client), noAlerts);
     const d = await svc.assess(intent, { context: ctx({ spreadPoints: 0.9 }) });
     expect(d.reason).toBe('SPREAD_TOO_WIDE');
     expect(inserted.risk_events?.some((r) => r.event_type === 'SPREAD_TOO_WIDE')).toBe(true);
@@ -72,7 +74,7 @@ describe('(a) RiskManagerService logs rejections/warnings to risk_events', () =>
 
   it('an approval with a Tier-2 clamp logs TIER2_CLAMPED', async () => {
     const { client, inserted } = makeSupabase({});
-    const svc = new RiskManagerService(client, makeAdapter(), new TradingStateService());
+    const svc = new RiskManagerService(client, makeAdapter(), new TradingStateService(client), noAlerts);
     const d = await svc.assess(intent, { context: ctx({ riskPerTradePct: 2.5, tier2Unlocked: false }) });
     expect(d.approved).toBe(true);
     expect(inserted.risk_events?.some((r) => r.event_type === 'TIER2_CLAMPED')).toBe(true);
@@ -91,7 +93,7 @@ describe('(f) exposure reads LIVE broker open trades (D9)', () => {
     ]);
     const adapter = makeAdapter({ getOpenTrades: openTrades as any });
     const { client } = makeSupabase(benignHandlers);
-    const svc = new RiskManagerService(client, adapter, new TradingStateService());
+    const svc = new RiskManagerService(client, adapter, new TradingStateService(client), noAlerts);
 
     const d = await svc.assess(intent, { now: MIDWEEK_OPEN });
     expect(openTrades).toHaveBeenCalled(); // broker state read, not just DB
@@ -112,7 +114,7 @@ describe('(g) loss baseline from equity_snapshots (00:00 UK reference)', () => {
       ...benignHandlers,
       equity_snapshots: () => ({ data: [{ equity: 2000 }] }), // reference = 2000
     });
-    const svc = new RiskManagerService(client, adapter, new TradingStateService());
+    const svc = new RiskManagerService(client, adapter, new TradingStateService(client), noAlerts);
 
     const d = await svc.assess(intent, { now: MIDWEEK_OPEN }); // equity 1900 vs ref 2000 = 5% > 3%
     expect(d.reason).toBe('DAILY_LOSS_HALT');

@@ -22,7 +22,8 @@ async function main(): Promise<void> {
   });
   const adapter = new OandaAdapter();
   const alerts = { sendAdminError: async () => undefined } as any;
-  const recon = new ReconciliationService(sb as never, adapter, new ExecutionReadinessService(), alerts);
+  const breaker = { escalateUnexpectedFill: async () => undefined } as any;
+  const recon = new ReconciliationService(sb as never, adapter, new ExecutionReadinessService(), alerts, breaker);
 
   const res = await recon.reconcile();
   console.log('reconcile (reads broker, writes only DB):', res);

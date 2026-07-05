@@ -14,6 +14,7 @@ import { BrokerModule } from './broker/broker.module';
 import { RiskModule } from './risk/risk.module';
 import { ReconciliationModule } from './execution/reconciliation.module';
 import { ExecutionModule } from './execution/execution.module';
+import { KillSwitchModule } from './killswitch/killswitch.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ExecutionModule } from './execution/execution.module';
     RiskModule,
     ReconciliationModule,
     ExecutionModule,
+    KillSwitchModule,
   ],
 })
 export class AppModule {}

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { BrokerModule } from '../broker/broker.module';
 import { AlertsModule } from '../alerts/alerts.module';
+import { KillSwitchModule } from '../killswitch/killswitch.module';
 import { ReconciliationService } from './reconciliation.service';
 import { ExecutionReadinessService } from './readiness.service';
 
@@ -10,7 +11,7 @@ import { ExecutionReadinessService } from './readiness.service';
  * snapshots + startup reconcile gate. Reads the broker; NEVER places/closes.
  */
 @Module({
-  imports: [SupabaseModule, BrokerModule, AlertsModule],
+  imports: [SupabaseModule, BrokerModule, AlertsModule, KillSwitchModule],
   providers: [ReconciliationService, ExecutionReadinessService],
   exports: [ReconciliationService, ExecutionReadinessService],
 })

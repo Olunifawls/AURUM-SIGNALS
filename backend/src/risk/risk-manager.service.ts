@@ -8,6 +8,7 @@ import { evaluateOrder } from './evaluate';
 import { sessionFlags } from './session';
 import { FallbackNewsCalendar, NewsCalendar } from './news';
 import { TradingStateService } from './trading-state.service';
+import { AlertsService } from '../alerts/alerts.service';
 
 const XAU = 'XAU_USD';
 
@@ -25,6 +26,7 @@ export class RiskManagerService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
     private readonly state: TradingStateService,
+    private readonly alerts: AlertsService,
   ) {}
 
   /** Assess an order intent. `opts.context` injects a prebuilt context (tests);
@@ -33,6 +35,12 @@ export class RiskManagerService {
     const ctx = opts.context ?? (await this.gather(intent, opts.now ?? new Date()));
     const decision = evaluateOrder(intent, ctx);
     await this.logEvents(intent, ctx.mode, decision.events);
+    // Wire the deferred INC-2 degraded-news alert to Telegram (throttled).
+    if (decision.events.some((e) => e.event_type === 'NEWS_COVERAGE_DEGRADED')) {
+      void this.alerts
+        .sendAdminError('news-degraded', 'News blackout coverage DEGRADED (fallback calendar; no live API key).')
+        .catch(() => undefined);
+    }
     this.logger.log(
       `assess ${intent.side} ${intent.timeframe} -> ${decision.approved ? `APPROVED units=${decision.sizing?.units}` : `REJECTED ${decision.reason}`}`,
     );
@@ -56,19 +64,20 @@ export class RiskManagerService {
     const existingOpenSameDirTf = await this.hasOpenSameDirTf(intent.side, intent.timeframe);
     const resolvedDemoTrades = await this.countResolvedTrades('demo');
     const { daily, weekly, hwm } = await this.equityBaselines(now);
+    const [halted, volatilityCooldown] = await Promise.all([this.state.isHalted(now), this.state.isVolatilityCooldown(now)]);
 
     return {
       now,
       mode: cfg.tradingMode,
       autoTradeEnabled: cfg.autoTradeEnabled,
-      halted: this.state.isHalted(),
+      halted,
       resolvedDemoTrades,
       session: sessionFlags(now),
       news: (() => {
         const b = this.news.isInBlackout(now);
         return { inBlackout: b.blackout, degraded: this.news.degraded, source: this.news.source };
       })(),
-      volatilityCooldown: this.state.isVolatilityCooldown(),
+      volatilityCooldown,
       brokerOpenTradeCount: openTrades.length,
       existingOpenSameDirTf,
       maxOpenPositions: cfg.maxOpenPositions,
