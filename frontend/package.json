@@ -7,6 +7,7 @@
     "dev": "env-cmd --silent -f ../.env next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "env-cmd --silent -f ../.env next start -H 0.0.0.0 -p 3000",
+    "start:docker": "next start -H 0.0.0.0 -p 3000",
     "lint": "next lint",
     "test": "echo \"No frontend unit tests in INC-0\" && exit 0"
   },

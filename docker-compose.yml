@@ -1,0 +1,55 @@
+# AURUM SIGNALS — production stack (VPS). Only nginx is public (80/443).
+# backend + frontend are INTERNAL ONLY (no published ports). Secrets come from
+# ./.env (env_file; NOT in git). The always-on backend runs the schedule crons.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      - PORT=3001
+    expose:
+      - "3001" # internal network only — never published to the host/internet
+    restart: unless-stopped
+    networks: [aurum]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    env_file: .env
+    environment:
+      - BACKEND_URL=http://backend:3001 # server-side proxy target (internal DNS)
+      - PORT=3000
+    expose:
+      - "3000" # internal only
+    depends_on: [backend]
+    restart: unless-stopped
+    networks: [aurum]
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./certbot-webroot:/var/www/certbot
+    depends_on: [frontend]
+    restart: unless-stopped
+    networks: [aurum]
+
+  # ── L2-READY (INC-10 note; NOT implemented) ────────────────────────────────
+  # A future broker / order-execution service slots in HERE as a 4th internal
+  # service on the `aurum` network (no public port). It would talk to `backend`
+  # over http://backend:3001 (or a dedicated internal API) and hold its own
+  # broker credentials via env_file. No re-architecture of nginx/frontend needed.
+
+networks:
+  aurum:
+    driver: bridge

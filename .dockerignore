@@ -1,0 +1,11 @@
+**/node_modules
+.git
+.github
+**/.next
+**/dist
+.cache
+.env
+.env.*
+!.env.example
+*.log
+supabase/.temp
