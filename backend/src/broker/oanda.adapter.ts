@@ -191,6 +191,25 @@ export class OandaAdapter implements IBrokerAdapter {
     return { closed: !!json.orderFillTransaction, raw: json };
   }
 
+  async getTrade(tradeId: string): Promise<import('./broker.interface').BrokerTradeState> {
+    const { json } = await this.request('GET', `/v3/accounts/${this.account}/trades/${tradeId}`, undefined, {
+      retry: true,
+    });
+    const t = json.trade ?? {};
+    const units = Number(t.currentUnits ?? t.initialUnits ?? 0);
+    return {
+      id: String(t.id ?? tradeId),
+      state: t.state === 'CLOSED' ? 'CLOSED' : 'OPEN',
+      instrument: t.instrument,
+      units: Math.abs(units),
+      price: Number(t.price ?? 0),
+      closePrice: t.averageClosePrice != null ? Number(t.averageClosePrice) : null,
+      realizedPl: Number(t.realizedPL ?? 0),
+      clientTag: t.clientExtensions?.id,
+      raw: json,
+    };
+  }
+
   async getTransactionsSince(id: string): Promise<BrokerTransaction[]> {
     const { json } = await this.request(
       'GET',

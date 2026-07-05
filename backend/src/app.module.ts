@@ -12,6 +12,8 @@ import { ApiModule } from './api/api.module';
 import { Level2Module } from './level2/level2.module';
 import { BrokerModule } from './broker/broker.module';
 import { RiskModule } from './risk/risk.module';
+import { ReconciliationModule } from './execution/reconciliation.module';
+import { ExecutionModule } from './execution/execution.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { RiskModule } from './risk/risk.module';
     Level2Module,
     BrokerModule,
     RiskModule,
+    ReconciliationModule,
+    ExecutionModule,
   ],
 })
 export class AppModule {}

@@ -34,6 +34,18 @@ export interface InstrumentInfo {
   displayPrecision: number;
 }
 
+export interface BrokerTradeState {
+  id: string;
+  state: 'OPEN' | 'CLOSED';
+  instrument: string;
+  units: number;
+  price: number; // entry
+  closePrice: number | null;
+  realizedPl: number; // account ccy
+  clientTag?: string;
+  raw?: unknown;
+}
+
 export interface BrokerTrade {
   id: string; // broker trade id
   instrument: string;
@@ -81,6 +93,7 @@ export interface IBrokerAdapter {
   getTransactionsSince(id: string): Promise<BrokerTransaction[]>;
   getPricing(instrument: string): Promise<Pricing>;
   getInstrument(instrument: string): Promise<InstrumentInfo>;
+  getTrade(tradeId: string): Promise<BrokerTradeState>;
 }
 
 /**

@@ -18,6 +18,10 @@ export interface PlaceForSignalInput {
   takeProfit?: number;
   mode?: 'demo' | 'live';
   instrumentOanda?: string; // default 'XAU_USD'
+  // INC-2 sizing (persisted on the order row)
+  equityAtEntry?: number;
+  riskCcy?: number;
+  riskPctActual?: number;
 }
 
 export interface PlaceOutcome {
@@ -73,6 +77,9 @@ export class OrderPlacementService {
         take_profit: input.takeProfit ?? null,
         status: 'PENDING',
         client_tag: tag,
+        equity_at_entry: input.equityAtEntry ?? null,
+        risk_ccy: input.riskCcy ?? null,
+        risk_pct_actual: input.riskPctActual ?? null,
       })
       .select('id')
       .single();
