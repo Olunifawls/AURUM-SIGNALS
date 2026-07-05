@@ -51,6 +51,9 @@ describe('OandaAdapter', () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body);
     expect(body.order.units).toBe('1');
     expect(body.order.clientExtensions.id).toBe('aurum-s1');
+    // the resulting TRADE must also carry the tag so getOpenTrades/reconcile can
+    // match it by tag (order clientExtensions do not propagate to the trade)
+    expect(body.order.tradeClientExtensions.id).toBe('aurum-s1');
     expect(body.order.stopLossOnFill.price).toBe('2300.000');
     expect(body.order.takeProfitOnFill.price).toBe('2400.000');
   });

@@ -155,7 +155,12 @@ export class OandaAdapter implements IBrokerAdapter {
       units: String(Math.round(signedUnits * 10) / 10),
       timeInForce: 'FOK',
       positionFill: 'DEFAULT',
-      clientExtensions: { id: p.clientTag }, // reconciliation tag
+      clientExtensions: { id: p.clientTag }, // tag on the ORDER
+      // Tag the resulting TRADE too — order clientExtensions do NOT propagate to
+      // the opened trade, so getOpenTrades()/ambiguous-reconcile could not match
+      // it by tag (the "NOT FOUND" seen in verification). This makes the trade
+      // carry aurum-{signal_id} so tag-based open-trade lookups work.
+      tradeClientExtensions: { id: p.clientTag },
     };
     if (p.stopLossPrice != null) order.stopLossOnFill = { price: this.fmtPrice(p.stopLossPrice) };
     if (p.takeProfitPrice != null) order.takeProfitOnFill = { price: this.fmtPrice(p.takeProfitPrice) };
