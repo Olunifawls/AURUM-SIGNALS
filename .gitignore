@@ -19,3 +19,6 @@ coverage
 # supabase cli local state
 supabase/.temp
 supabase/.branches
+
+# backtest cache (historical data — never commit)
+.cache
