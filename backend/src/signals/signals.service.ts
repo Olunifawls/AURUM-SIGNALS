@@ -17,6 +17,7 @@ import {
   minRrRatio,
 } from './signals.constants';
 import { evaluateFromCandles, EvaluationResult } from './signal-engine';
+import { SizingService } from '../sizing/sizing.service';
 
 const EVENT_SOURCE = 'signals';
 const FETCH_LIMIT = 500;
@@ -50,6 +51,7 @@ export class SignalsService {
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     private readonly events: SystemEventsService,
+    private readonly sizing: SizingService,
   ) {}
 
   private trackConfig(tf: Timeframe): TrackConfig | null {
@@ -229,6 +231,9 @@ export class SignalsService {
     const lv = result.levels!;
     const factors = this.buildFactorsJson(tf, track, result);
 
+    // INC-6: position sizing from current user_settings + latest FX.
+    const sizing = await this.sizing.computeForSignal(lv.entry, lv.stop, lv.takeProfit);
+
     const { data, error } = await this.supabase
       .from('signals')
       .insert({
@@ -245,7 +250,9 @@ export class SignalsService {
         factors,
         status: 'OPEN',
         tp_structure_capped: lv.tpStructureCapped,
-        // suggested_lots / risk_amount_ccy / sizing_note deliberately left NULL (INC-6)
+        suggested_lots: sizing.suggested_lots,
+        risk_amount_ccy: sizing.risk_amount_ccy,
+        sizing_note: sizing.sizing_note,
       })
       .select('id')
       .single();
