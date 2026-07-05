@@ -10,6 +10,7 @@ import { SizingModule } from './sizing/sizing.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { ApiModule } from './api/api.module';
 import { Level2Module } from './level2/level2.module';
+import { BrokerModule } from './broker/broker.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { Level2Module } from './level2/level2.module';
     IngestionModule,
     ApiModule,
     Level2Module,
+    BrokerModule,
   ],
 })
 export class AppModule {}
