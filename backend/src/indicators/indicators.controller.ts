@@ -1,12 +1,14 @@
-import { BadRequestException, Controller, Param, Post } from '@nestjs/common';
+import { BadRequestException, Controller, Param, Post, UseGuards } from '@nestjs/common';
 import { IndicatorsService } from './indicators.service';
 import { TIMEFRAMES, Timeframe } from '../ingestion/ingestion.constants';
+import { AdminTokenGuard } from '../common/admin-token.guard';
 
 /**
  * On-demand indicator recompute. Same testability/ops caveat as INC-1's manual
  * ingestion triggers: unauthenticated on this personal single-instance backend
  * — no extra auth scope is introduced here.
  */
+@UseGuards(AdminTokenGuard)
 @Controller('api/indicators')
 export class IndicatorsController {
   constructor(private readonly indicators: IndicatorsService) {}

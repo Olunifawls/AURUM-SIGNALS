@@ -1,11 +1,13 @@
-import { BadRequestException, Controller, Param, Post } from '@nestjs/common';
+import { BadRequestException, Controller, Param, Post, UseGuards } from '@nestjs/common';
 import { SignalsService } from './signals.service';
 import { TIMEFRAMES, Timeframe } from '../ingestion/ingestion.constants';
+import { AdminTokenGuard } from '../common/admin-token.guard';
 
 /**
  * On-demand signal evaluation. Same unauthenticated caveat as the INC-1/2
  * manual triggers on this personal single-instance backend — no new auth scope.
  */
+@UseGuards(AdminTokenGuard)
 @Controller('api/signals')
 export class SignalsController {
   constructor(private readonly signals: SignalsService) {}

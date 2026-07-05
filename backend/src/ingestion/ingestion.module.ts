@@ -6,7 +6,6 @@ import { SignalsModule } from '../signals/signals.module';
 import { TrackerModule } from '../tracker/tracker.module';
 import { IngestionService } from './ingestion.service';
 import { IngestionController } from './ingestion.controller';
-import { IngestionHealthController } from './ingestion.health.controller';
 import { TwelveDataService } from './twelve-data.service';
 import { GoldApiService } from './gold-api.service';
 import { RateBudgetService } from './rate-budget.service';
@@ -14,7 +13,7 @@ import { CircuitBreakerRegistry } from './circuit-breaker';
 
 @Module({
   imports: [SupabaseModule, CommonModule, IndicatorsModule, SignalsModule, TrackerModule],
-  controllers: [IngestionHealthController, IngestionController],
+  controllers: [IngestionController],
   providers: [
     IngestionService,
     TwelveDataService,

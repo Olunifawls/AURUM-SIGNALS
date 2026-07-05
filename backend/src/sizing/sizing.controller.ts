@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { SizingService } from './sizing.service';
+import { AdminTokenGuard } from '../common/admin-token.guard';
 
 /**
- * Sizing calculator, tier status, and risk_pct update. Same unauthenticated
- * caveat as the prior manual endpoints on this personal single-instance backend
- * — no new auth scope. (No UI here; INC-9.)
+ * Sizing calculator (public, pure read-only), tier status (public read), and
+ * risk_pct update (state-changing -> protected by AdminTokenGuard). No UI here
+ * (INC-9).
  */
 @Controller('api')
 export class SizingController {
@@ -31,6 +32,7 @@ export class SizingController {
     return this.sizing.tierStatus();
   }
 
+  @UseGuards(AdminTokenGuard)
   @Post('settings/risk-pct')
   updateRiskPct(@Body() body: { risk_pct: number; acknowledgment?: string }) {
     return this.sizing.updateRiskPct(body.risk_pct, body.acknowledgment);

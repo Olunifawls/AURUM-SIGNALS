@@ -1,6 +1,7 @@
-import { BadRequestException, Controller, Param, Post } from '@nestjs/common';
+import { BadRequestException, Controller, Param, Post, UseGuards } from '@nestjs/common';
 import { IngestionService } from './ingestion.service';
 import { TIMEFRAMES, Timeframe } from './ingestion.constants';
+import { AdminTokenGuard } from '../common/admin-token.guard';
 
 /**
  * Manual ingestion triggers. These exist to make the INC-1 Definition-of-Done
@@ -10,6 +11,7 @@ import { TIMEFRAMES, Timeframe } from './ingestion.constants';
  *   - /api/ingest/timeframe/* respects the gate (cron semantics)
  *   - /api/ingest/fx          respects the gate (cron semantics)
  */
+@UseGuards(AdminTokenGuard)
 @Controller('api/ingest')
 export class IngestionController {
   constructor(private readonly ingestion: IngestionService) {}
