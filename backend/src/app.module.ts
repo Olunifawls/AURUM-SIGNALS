@@ -11,6 +11,7 @@ import { AlertsModule } from './alerts/alerts.module';
 import { ApiModule } from './api/api.module';
 import { Level2Module } from './level2/level2.module';
 import { BrokerModule } from './broker/broker.module';
+import { RiskModule } from './risk/risk.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { BrokerModule } from './broker/broker.module';
     ApiModule,
     Level2Module,
     BrokerModule,
+    RiskModule,
   ],
 })
 export class AppModule {}

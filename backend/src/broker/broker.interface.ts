@@ -11,9 +11,27 @@ export interface AccountSummary {
   balance: number;
   equity: number; // NAV
   unrealizedPl: number;
+  marginUsed: number;
   openTradeCount: number;
   lastTransactionId: string;
   raw?: unknown;
+}
+
+export interface Pricing {
+  instrument: string;
+  bid: number;
+  ask: number;
+  spread: number;
+  tradeable: boolean;
+}
+
+export interface InstrumentInfo {
+  name: string;
+  type: string;
+  marginRate: number;
+  minimumTradeSize: number;
+  tradeUnitsPrecision: number;
+  displayPrecision: number;
 }
 
 export interface BrokerTrade {
@@ -61,6 +79,8 @@ export interface IBrokerAdapter {
   placeMarketOrder(params: PlaceMarketOrderParams): Promise<PlaceMarketOrderResult>;
   closeTrade(tradeId: string): Promise<{ closed: boolean; raw?: unknown }>;
   getTransactionsSince(id: string): Promise<BrokerTransaction[]>;
+  getPricing(instrument: string): Promise<Pricing>;
+  getInstrument(instrument: string): Promise<InstrumentInfo>;
 }
 
 /**

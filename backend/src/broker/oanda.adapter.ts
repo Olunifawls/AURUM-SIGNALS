@@ -5,8 +5,10 @@ import {
   BrokerTrade,
   BrokerTransaction,
   IBrokerAdapter,
+  InstrumentInfo,
   PlaceMarketOrderParams,
   PlaceMarketOrderResult,
+  Pricing,
 } from './broker.interface';
 
 // DEMO ONLY. The live URL/token are NEVER referenced in this increment.
@@ -87,9 +89,41 @@ export class OandaAdapter implements IBrokerAdapter {
       balance: Number(a.balance),
       equity: Number(a.NAV),
       unrealizedPl: Number(a.unrealizedPL),
+      marginUsed: Number(a.marginUsed ?? 0),
       openTradeCount: Number(a.openTradeCount),
       lastTransactionId: String(a.lastTransactionID),
       raw: json,
+    };
+  }
+
+  async getPricing(instrument: string): Promise<Pricing> {
+    const { json } = await this.request(
+      'GET',
+      `/v3/accounts/${this.account}/pricing?instruments=${encodeURIComponent(instrument)}`,
+      undefined,
+      { retry: true },
+    );
+    const p = json.prices?.[0];
+    const bid = Number(p?.bids?.[0]?.price ?? p?.closeoutBid ?? 0);
+    const ask = Number(p?.asks?.[0]?.price ?? p?.closeoutAsk ?? 0);
+    return { instrument, bid, ask, spread: ask - bid, tradeable: p?.tradeable ?? p?.status === 'tradeable' };
+  }
+
+  async getInstrument(instrument: string): Promise<InstrumentInfo> {
+    const { json } = await this.request(
+      'GET',
+      `/v3/accounts/${this.account}/instruments?instruments=${encodeURIComponent(instrument)}`,
+      undefined,
+      { retry: true },
+    );
+    const i = json.instruments?.[0] ?? {};
+    return {
+      name: i.name ?? instrument,
+      type: i.type ?? 'METAL',
+      marginRate: Number(i.marginRate ?? 0.05),
+      minimumTradeSize: Number(i.minimumTradeSize ?? 0.1),
+      tradeUnitsPrecision: Number(i.tradeUnitsPrecision ?? 1),
+      displayPrecision: Number(i.displayPrecision ?? 3),
     };
   }
 
