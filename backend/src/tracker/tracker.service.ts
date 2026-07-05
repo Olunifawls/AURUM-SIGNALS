@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { SystemEventsService } from '../common/system-events.service';
+import { AlertsService } from '../alerts/alerts.service';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { Candle15, Direction, resolveSignal } from './resolution';
 import { computePerformanceDaily, RollupInput, SignalStatus } from './performance';
@@ -11,6 +12,7 @@ const EVENT_SOURCE = 'tracker';
 interface OpenSignalRow {
   id: string;
   direction: Direction;
+  timeframe: string;
   entry_price: number;
   stop_loss: number;
   take_profit: number;
@@ -35,6 +37,7 @@ export class TrackerService {
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     private readonly events: SystemEventsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   async run(now: string = new Date().toISOString()): Promise<TrackerRunResult> {
@@ -67,6 +70,22 @@ export class TrackerService {
         `resolved signal ${sig.id} -> ${res.status} (${res.rMultiple.toFixed(2)}R)`,
         { id: sig.id, status: res.status, resolvedPrice: res.resolvedPrice },
       );
+
+      // INC-7: resolution Telegram alert. Isolated — never break tracking.
+      try {
+        await this.alerts.sendResolution({
+          status: res.status,
+          direction: sig.direction,
+          timeframe: sig.timeframe,
+          entry: Number(sig.entry_price),
+          rMultiple: res.rMultiple,
+        });
+      } catch (alertErr) {
+        await this.events.warn(EVENT_SOURCE, `resolution alert failed for ${sig.id}`, {
+          id: sig.id,
+          error: String(alertErr),
+        });
+      }
     }
 
     const performanceDays = await this.recomputePerformance();
@@ -85,7 +104,7 @@ export class TrackerService {
   private async fetchOpenSignals(): Promise<OpenSignalRow[]> {
     const { data, error } = await this.supabase!
       .from('signals')
-      .select('id,direction,entry_price,stop_loss,take_profit,created_at')
+      .select('id,direction,timeframe,entry_price,stop_loss,take_profit,created_at')
       .eq('symbol', SYMBOL)
       .eq('status', 'OPEN')
       .order('created_at', { ascending: true });

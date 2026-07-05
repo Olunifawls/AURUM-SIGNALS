@@ -7,12 +7,14 @@ import { IndicatorsModule } from './indicators/indicators.module';
 import { SignalsModule } from './signals/signals.module';
 import { TrackerModule } from './tracker/tracker.module';
 import { SizingModule } from './sizing/sizing.module';
+import { AlertsModule } from './alerts/alerts.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     HealthModule,
     SupabaseModule,
+    AlertsModule,
     IndicatorsModule,
     SizingModule,
     SignalsModule,

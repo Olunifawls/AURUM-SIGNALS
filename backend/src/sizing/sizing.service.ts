@@ -18,6 +18,8 @@ export interface SignalSizing {
   suggested_lots: number | null;
   risk_amount_ccy: number | null;
   sizing_note: string;
+  account_size: number;
+  account_ccy: string;
 }
 
 export interface TierStatus {
@@ -76,6 +78,8 @@ export class SizingService {
         suggested_lots: null,
         risk_amount_ccy: null,
         sizing_note: 'SIZING UNAVAILABLE — no FX rate (GBP/USD) yet.',
+        account_size: settings.account_size,
+        account_ccy: settings.account_ccy,
       };
     }
     const r = computeSizing({
@@ -91,6 +95,8 @@ export class SizingService {
       suggested_lots: r.tooSmall ? 0 : r.suggestedLots,
       risk_amount_ccy: r.tooSmall ? null : round2(r.riskAmountCcy),
       sizing_note: r.sizingNote,
+      account_size: settings.account_size,
+      account_ccy: settings.account_ccy,
     };
   }
 

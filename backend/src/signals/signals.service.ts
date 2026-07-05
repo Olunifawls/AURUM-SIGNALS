@@ -18,6 +18,7 @@ import {
 } from './signals.constants';
 import { evaluateFromCandles, EvaluationResult } from './signal-engine';
 import { SizingService } from '../sizing/sizing.service';
+import { AlertsService } from '../alerts/alerts.service';
 
 const EVENT_SOURCE = 'signals';
 const FETCH_LIMIT = 500;
@@ -52,6 +53,7 @@ export class SignalsService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     private readonly events: SystemEventsService,
     private readonly sizing: SizingService,
+    private readonly alerts: AlertsService,
   ) {}
 
   private trackConfig(tf: Timeframe): TrackConfig | null {
@@ -175,7 +177,47 @@ export class SignalsService {
       };
     }
 
-    const signalId = await this.insertSignal(tf, cfg.track, result);
+    // INC-6 sizing computed once, used for the row and the alert.
+    const lv = result.levels!;
+    const sizing = await this.sizing.computeForSignal(lv.entry, lv.stop, lv.takeProfit);
+
+    const signalId = await this.insertSignal(tf, cfg.track, result, sizing);
+
+    // INC-7: new-signal Telegram alert (core always; experimental only if the
+    // ALERT_15MIN flag is on — handled inside AlertsService). Isolated so a
+    // Telegram outage never breaks signal generation.
+    try {
+      await this.alerts.sendNewSignal({
+        direction: result.direction as 'BUY' | 'SELL',
+        timeframe: tf,
+        track: cfg.track,
+        score: result.score!,
+        max: CONFLUENCE_MAX,
+        entry: lv.entry,
+        stop: lv.stop,
+        target: lv.takeProfit,
+        rr: lv.rr,
+        factors: {
+          F1: result.factors!.F1.pass,
+          F2: result.factors!.F2.pass,
+          F3: result.factors!.F3.pass,
+          F4: result.factors!.F4.pass,
+          F5: result.factors!.F5.pass,
+          F6: result.factors!.F6.pass,
+        },
+        suggestedLots: sizing.suggested_lots,
+        riskAmountCcy: sizing.risk_amount_ccy,
+        accountSize: sizing.account_size,
+        accountCcy: sizing.account_ccy,
+        sizingNote: sizing.sizing_note,
+      });
+    } catch (alertErr) {
+      await this.events.warn(EVENT_SOURCE, `signal alert failed for ${tf}`, {
+        timeframe: tf,
+        error: String(alertErr),
+      });
+    }
+
     await this.events.info(
       EVENT_SOURCE,
       `${tf} (${cfg.track}) ${result.direction} signal fired score=${result.score}/${CONFLUENCE_MAX} rr=${result.levels!.rr.toFixed(2)}`,
@@ -226,13 +268,11 @@ export class SignalsService {
     tf: Timeframe,
     track: 'core' | 'experimental',
     result: EvaluationResult,
+    sizing: { suggested_lots: number | null; risk_amount_ccy: number | null; sizing_note: string },
   ): Promise<string> {
     if (!this.supabase) throw new Error('Supabase client not configured');
     const lv = result.levels!;
     const factors = this.buildFactorsJson(tf, track, result);
-
-    // INC-6: position sizing from current user_settings + latest FX.
-    const sizing = await this.sizing.computeForSignal(lv.entry, lv.stop, lv.takeProfit);
 
     const { data, error } = await this.supabase
       .from('signals')

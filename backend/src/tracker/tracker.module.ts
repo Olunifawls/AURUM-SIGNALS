@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
+import { AlertsModule } from '../alerts/alerts.module';
 import { TrackerService } from './tracker.service';
 import { TrackerController } from './tracker.controller';
 
 @Module({
-  imports: [SupabaseModule, CommonModule],
+  imports: [SupabaseModule, CommonModule, AlertsModule],
   controllers: [TrackerController],
   providers: [TrackerService],
   exports: [TrackerService],

@@ -1,13 +1,15 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
+import { AlertsService } from '../alerts/alerts.service';
 
 export type EventLevel = 'INFO' | 'WARN' | 'ERROR';
 
 /**
  * Writes structured events to the `system_events` table (service-role, so it
  * bypasses RLS). Logging must never crash the caller: DB failures are swallowed
- * after being echoed to the Nest logger.
+ * after being echoed to the Nest logger. ERROR-level events are forwarded to
+ * AlertsService as throttled admin alerts (fire-and-forget, isolated).
  */
 @Injectable()
 export class SystemEventsService {
@@ -15,6 +17,7 @@ export class SystemEventsService {
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
+    private readonly alerts: AlertsService,
   ) {}
 
   async log(
@@ -27,6 +30,12 @@ export class SystemEventsService {
     if (level === 'ERROR') this.logger.error(line);
     else if (level === 'WARN') this.logger.warn(line);
     else this.logger.log(line);
+
+    // Forward ERRORs to the (throttled) admin alert channel. Isolated: alert
+    // failures must never affect the caller.
+    if (level === 'ERROR') {
+      void this.alerts.sendAdminError(source, message).catch(() => undefined);
+    }
 
     if (!this.supabase) return;
     try {

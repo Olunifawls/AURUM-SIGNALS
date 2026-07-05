@@ -10,7 +10,8 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
-    "backtest": "ts-node --transpile-only src/backtest/run-backtest.ts"
+    "backtest": "ts-node --transpile-only src/backtest/run-backtest.ts",
+    "telegram:chatid": "ts-node --transpile-only src/alerts/get-chatid.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
