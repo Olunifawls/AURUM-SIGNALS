@@ -46,6 +46,30 @@ describe('(b) formatNewSignal — exact format', () => {
   });
 });
 
+describe('(d) robust: missing FX/sizing degrades gracefully, never throws', () => {
+  it('missing sizing/FX -> "unavailable" line, all other params intact', () => {
+    const out = formatNewSignal({
+      ...SAMPLE_ALERT_SIGNAL,
+      suggestedLots: null,
+      riskAmountCcy: null,
+      sizingNote: undefined,
+    });
+    expect(out).toContain('Your size: unavailable (sizing/FX data missing).');
+    expect(out).toContain('🟡 GOLD SIGNAL — BUY (4h)');
+    expect(out).toContain('R:R = 2.0');
+    expect(out).toContain('Factors: Trend HTF');
+    expect(out).toContain('Analysis only');
+  });
+
+  it('an undefined numeric field (rr) does NOT throw and does not swallow the alert', () => {
+    const bad = { ...SAMPLE_ALERT_SIGNAL, rr: undefined as unknown as number };
+    expect(() => formatNewSignal(bad)).not.toThrow();
+    const out = formatNewSignal(bad);
+    expect(out).toContain('R:R = —');
+    expect(out).toContain('🟡 GOLD SIGNAL');
+  });
+});
+
 describe('(c) formatResolution — TP / SL / EXPIRED signed R', () => {
   const base: AlertResolution = { status: 'HIT_TP', direction: 'BUY', timeframe: '4h', entry: 2341.2, rMultiple: 2.0 };
 
