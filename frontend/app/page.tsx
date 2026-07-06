@@ -12,7 +12,7 @@ import ActiveSignals from '../components/ActiveSignals';
 
 const TradingViewChart = dynamic(() => import('../components/TradingViewChart'), {
   ssr: false,
-  loading: () => <div className="h-[480px] w-full animate-pulse rounded-lg bg-neutral-900" />,
+  loading: () => <div className="h-full w-full animate-pulse rounded-lg bg-neutral-900" />,
 });
 
 export default function OverviewPage() {
@@ -86,13 +86,16 @@ export default function OverviewPage() {
         </div>
       </section>
 
-      <section>
-        <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+      {/* Full-size, responsive chart: near full-screen on mobile (edge-to-edge),
+          a large ~78vh chart on desktop. */}
+      <section className="-mx-4 sm:mx-0">
+        <div className="h-[calc(100dvh-200px)] min-h-[440px] w-full sm:h-[min(78vh,820px)] sm:min-h-[520px] sm:rounded-lg sm:border sm:border-neutral-800 sm:bg-neutral-950 sm:p-1">
           <TradingViewChart symbol="OANDA:XAUUSD" />
         </div>
-        <p className="mt-1 text-xs text-neutral-500">
-          Live chart via TradingView — use its controls for timeframe, indicators and drawing. Our
-          signal levels are listed below and on the History page.
+        <p className="mt-1 px-4 text-xs text-neutral-500 sm:px-0">
+          Live chart via TradingView — EMA 20/50/200 + RSI, MACD, ATR preloaded; use its controls for
+          timeframe, indicators, drawing and fullscreen. Signal levels are listed below and on the
+          History page.
         </p>
       </section>
 
