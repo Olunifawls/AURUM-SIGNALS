@@ -77,6 +77,12 @@ export class AlertsService {
   }
 
   async sendResolution(res: AlertResolution): Promise<boolean> {
+    // Same experimental gate as new-signal alerts: when ALERT_15MIN is off, an
+    // experimental (15min) signal sends NEITHER open nor close alert. Core always alerts.
+    if (!shouldAlertSignal(res.track, this.alert15mEnabled)) {
+      this.logger.log(`skipping resolution alert for ${res.track} ${res.timeframe} (ALERT_15MIN off)`);
+      return false;
+    }
     return this.send(formatResolution(res));
   }
 
@@ -89,7 +95,7 @@ export class AlertsService {
   async sendTest(type: 'signal' | 'resolution' | 'admin' = 'signal'): Promise<{ sent: boolean; text: string }> {
     let text: string;
     if (type === 'resolution') {
-      text = formatResolution({ status: 'HIT_TP', direction: 'BUY', timeframe: '4h', entry: 2341.2, rMultiple: 2.0 });
+      text = formatResolution({ status: 'HIT_TP', direction: 'BUY', timeframe: '4h', entry: 2341.2, rMultiple: 2.0, track: 'core' });
     } else if (type === 'admin') {
       text = formatAdminError('test', 'This is a test admin/error alert.');
     } else {

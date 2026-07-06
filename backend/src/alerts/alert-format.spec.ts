@@ -71,7 +71,7 @@ describe('(d) robust: missing FX/sizing degrades gracefully, never throws', () =
 });
 
 describe('(c) formatResolution — TP / SL / EXPIRED signed R', () => {
-  const base: AlertResolution = { status: 'HIT_TP', direction: 'BUY', timeframe: '4h', entry: 2341.2, rMultiple: 2.0 };
+  const base: AlertResolution = { status: 'HIT_TP', direction: 'BUY', timeframe: '4h', entry: 2341.2, rMultiple: 2.0, track: 'core' };
 
   it('TP HIT', () => {
     expect(formatResolution(base)).toBe('✅ TP HIT — BUY 4h from 2,341.20 → +2.0R');

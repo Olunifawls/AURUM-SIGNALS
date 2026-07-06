@@ -13,6 +13,7 @@ interface OpenSignalRow {
   id: string;
   direction: Direction;
   timeframe: string;
+  track: string;
   entry_price: number;
   stop_loss: number;
   take_profit: number;
@@ -79,6 +80,7 @@ export class TrackerService {
           timeframe: sig.timeframe,
           entry: Number(sig.entry_price),
           rMultiple: res.rMultiple,
+          track: (sig.track === 'experimental' ? 'experimental' : 'core') as 'core' | 'experimental',
         });
       } catch (alertErr) {
         await this.events.warn(EVENT_SOURCE, `resolution alert failed for ${sig.id}`, {
@@ -104,7 +106,7 @@ export class TrackerService {
   private async fetchOpenSignals(): Promise<OpenSignalRow[]> {
     const { data, error } = await this.supabase!
       .from('signals')
-      .select('id,direction,timeframe,entry_price,stop_loss,take_profit,created_at')
+      .select('id,direction,timeframe,track,entry_price,stop_loss,take_profit,created_at')
       .eq('symbol', SYMBOL)
       .eq('status', 'OPEN')
       .order('created_at', { ascending: true });

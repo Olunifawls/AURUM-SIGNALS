@@ -38,6 +38,7 @@ export interface AlertResolution {
   timeframe: string;
   entry: number;
   rMultiple: number;
+  track: Track; // gate close alerts by the same experimental rule as new-signal alerts
 }
 
 function group(intStr: string): string {
