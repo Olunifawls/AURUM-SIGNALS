@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
   { href: '/', label: 'Overview' },
@@ -19,7 +20,7 @@ export default function Nav() {
         <Link href="/" className="text-lg font-bold tracking-tight text-amber-400">
           AURUM SIGNALS
         </Link>
-        <nav className="flex flex-wrap gap-1 text-sm">
+        <nav className="flex flex-wrap items-center gap-1 text-sm">
           {LINKS.map((l) => {
             const active = l.href === '/' ? pathname === '/' : pathname.startsWith(l.href);
             return (
@@ -36,6 +37,7 @@ export default function Nav() {
               </Link>
             );
           })}
+          <ThemeToggle />
         </nav>
       </div>
     </header>

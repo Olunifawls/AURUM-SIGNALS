@@ -137,7 +137,7 @@ export default function SettingsPage() {
         <div className="mt-3 flex items-center gap-3">
           <button
             onClick={() => void saveAccount()}
-            className="rounded bg-neutral-200 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-white"
+            className="rounded bg-neutral-200 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-neutral-300"
           >
             Save account
           </button>

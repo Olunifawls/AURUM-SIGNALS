@@ -5,14 +5,14 @@ import dynamic from 'next/dynamic';
 import { apiGet } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useSignalsRealtime } from '../lib/useRealtime';
-import { fmtPrice, fmtPct, num, relTime } from '../lib/format';
-import { HealthResponse, MarketSnapshot, SignalRow, TIMEFRAMES, Timeframe } from '../lib/types';
+import { fmtPrice, fmtPct, relTime } from '../lib/format';
+import { HealthResponse, MarketSnapshot, SignalRow } from '../lib/types';
 import Freshness from '../components/Freshness';
 import ActiveSignals from '../components/ActiveSignals';
 
-const CandleChart = dynamic(() => import('../components/CandleChart'), {
+const TradingViewChart = dynamic(() => import('../components/TradingViewChart'), {
   ssr: false,
-  loading: () => <div className="h-[360px] w-full animate-pulse rounded-lg bg-neutral-900" />,
+  loading: () => <div className="h-[480px] w-full animate-pulse rounded-lg bg-neutral-900" />,
 });
 
 export default function OverviewPage() {
@@ -20,7 +20,6 @@ export default function OverviewPage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [active, setActive] = useState<SignalRow[]>([]);
   const [dayOpen, setDayOpen] = useState<number | null>(null);
-  const [tf, setTf] = useState<Timeframe>('1h');
 
   const load = useCallback(async () => {
     try {
@@ -88,27 +87,13 @@ export default function OverviewPage() {
       </section>
 
       <section>
-        <div className="mb-2 flex items-center gap-1">
-          {TIMEFRAMES.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTf(t)}
-              className={`rounded px-3 py-1 text-sm ${
-                tf === t ? 'bg-amber-500/15 text-amber-300' : 'text-neutral-400 hover:bg-neutral-800'
-              }`}
-            >
-              {t === '1day' ? '1D' : t === '15min' ? '15m' : t}
-            </button>
-          ))}
-          <span className="ml-auto text-xs text-neutral-500">
-            EMA<span className="text-blue-400"> 20</span>
-            <span className="text-purple-400"> 50</span>
-            <span className="text-amber-400"> 200</span> · S/R dashed
-          </span>
+        <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+          <TradingViewChart symbol="OANDA:XAUUSD" />
         </div>
-        <div className="rounded-lg border border-neutral-800 bg-[#0a0a0a] p-1">
-          <CandleChart timeframe={tf} indicators={snapshot?.indicators} signals={active} />
-        </div>
+        <p className="mt-1 text-xs text-neutral-500">
+          Live chart via TradingView — use its controls for timeframe, indicators and drawing. Our
+          signal levels are listed below and on the History page.
+        </p>
       </section>
 
       <section>

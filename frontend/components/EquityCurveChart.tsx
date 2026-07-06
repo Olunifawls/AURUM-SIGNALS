@@ -11,6 +11,12 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { ExecEquityPoint } from '../lib/types';
+import { useTheme } from './ThemeProvider';
+
+const chartColors = (theme: 'dark' | 'light') =>
+  theme === 'light'
+    ? { bg: '#ffffff', text: '#525252', grid: '#e5e5e5' }
+    : { bg: '#0a0a0a', text: '#a3a3a3', grid: '#1f1f1f' };
 
 /** Sanitize points for lightweight-charts: drop null/NaN, sort ascending by time,
  * de-duplicate identical timestamps (keep the latest value). */
@@ -31,16 +37,18 @@ export default function EquityCurveChart({ points, hwm }: { points: ExecEquityPo
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
+  const { theme } = useTheme();
 
   // Create the chart ONCE (never recreated on poll — recreating + double-remove was
   // the "Object is disposed" crash). Subsequent updates go through setData below.
   useEffect(() => {
     if (!containerRef.current) return;
+    const c = chartColors(theme);
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
       height: 280,
-      layout: { background: { type: ColorType.Solid, color: '#0a0a0a' }, textColor: '#a3a3a3' },
-      grid: { vertLines: { color: '#1f1f1f' }, horzLines: { color: '#1f1f1f' } },
+      layout: { background: { type: ColorType.Solid, color: c.bg }, textColor: c.text },
+      grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
       timeScale: { timeVisible: true, secondsVisible: false },
     });
     chartRef.current = chart;
@@ -66,7 +74,17 @@ export default function EquityCurveChart({ points, hwm }: { points: ExecEquityPo
       seriesRef.current = null;
       priceLineRef.current = null;
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // create ONCE; theme colors are (re)applied by the effect below
+
+  // Re-apply theme colors on toggle (no recreate).
+  useEffect(() => {
+    const c = chartColors(theme);
+    chartRef.current?.applyOptions({
+      layout: { background: { type: ColorType.Solid, color: c.bg }, textColor: c.text },
+      grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    });
+  }, [theme]);
 
   // Update data on every poll — no recreate, so no disposed-object risk.
   useEffect(() => {
