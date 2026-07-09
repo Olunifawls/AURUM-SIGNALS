@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Logger, Post, UseGuards } from '@nestjs/com
 import { AdminTokenGuard } from '../common/admin-token.guard';
 import { AdminResetService } from './admin-reset.service';
 import { CircuitBreakerService } from '../killswitch/circuit-breaker.service';
+import { RiskManagerService } from '../risk/risk-manager.service';
 
 /**
  * FIX-2 admin reset endpoint (AdminTokenGuard — server-side only).
@@ -20,6 +21,7 @@ export class AdminResetController {
   constructor(
     private readonly svc: AdminResetService,
     private readonly breakers: CircuitBreakerService,
+    private readonly risk: RiskManagerService,
   ) {}
 
   @Post('ledger-reset')
@@ -64,5 +66,32 @@ export class AdminResetController {
     this.logger.warn(`test-breaker: firing ${body.breaker} with synthetic inputs (DEMO)`);
     const spec = await this.breakers.testFireBreaker(body.breaker, body.inputs ?? {});
     return { ok: true, fired: spec !== null, spec: spec ?? null };
+  }
+
+  /**
+   * POST /api/admin/test-assess — run a synthetic OrderIntent through RiskManagerService.assess()
+   * and return the decision (approved or rejected + reason). DEMO ONLY. Admin-token gated.
+   * Used to prove that an active VOLATILITY_COOLDOWN or SESSION_GAP halt causes the
+   * RiskManager to reject new orders at the correct check.
+   */
+  @Post('test-assess')
+  @HttpCode(200)
+  async testAssess(@Body() body: { confirm?: string }) {
+    if ((process.env.TRADING_MODE ?? '').trim().toLowerCase() === 'live') {
+      return { ok: false, error: 'REFUSED: TRADING_MODE=live. DEMO-only endpoint.' };
+    }
+    if (body?.confirm !== 'TEST_ASSESS_DEMO') {
+      return { ok: false, error: 'Send body { "confirm": "TEST_ASSESS_DEMO" }' };
+    }
+    this.logger.warn('test-assess: running synthetic assess() (DEMO)');
+    const decision = await this.risk.assess({
+      signalId: 'TEST_ASSESS_SYNTHETIC',
+      side: 'BUY',
+      timeframe: '15min',
+      entryPrice: 3300,
+      stopLoss: 3290,
+      takeProfit: 3320,
+    });
+    return { ok: true, approved: decision.approved, reason: decision.reason ?? null };
   }
 }
