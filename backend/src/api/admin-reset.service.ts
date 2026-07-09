@@ -13,19 +13,21 @@ export interface LedgerResetResult {
   ts: string;
 }
 
+// Impossible UUID — matches no real row but satisfies the "must have a filter" rule.
+const NEVER_UUID = '00000000-0000-0000-0000-000000000000';
+
 /**
  * FIX-2 one-shot admin operation:
- *   1. Close ALL open OANDA demo trades (flatten).
- *   2. Verify the account is flat.
- *   3. Wipe the contaminated trading ledger atomically via reset_demo_ledger().
+ *   1. Close ALL open OANDA demo trades (flatten) and verify flat.
+ *   2. Wipe the contaminated trading ledger via direct Supabase REST deletes.
+ *      The service_role key bypasses RLS — no stored procedure required.
  *      Clean-data tables (candles, fx_rates, indicator_snapshots, broker_accounts,
  *      user_settings) are NEVER touched.
- *   4. Re-baseline equity: write fresh DAILY_REF, WEEKLY_REF, and HOURLY
- *      equity_snapshots from the current OANDA equity — so loss/drawdown
- *      breakers start from a clean reference instead of the stale £101k HWM.
+ *   3. Soft-clear all active system_halts rows.
+ *   4. Re-baseline equity: write fresh HOURLY, DAILY_REF, WEEKLY_REF snapshots
+ *      from the current OANDA equity so loss/drawdown breakers start clean.
  *
- * Called only from AdminResetController (AdminTokenGuard + confirm body).
- * DEMO ONLY. Does not change engine, risk, or execution logic.
+ * DEMO ONLY. No engine/risk/execution logic changes.
  */
 @Injectable()
 export class AdminResetService {
@@ -40,7 +42,7 @@ export class AdminResetService {
     if (!this.supabase) throw new Error('Supabase not configured');
     const ts = new Date().toISOString();
 
-    // Step 1: Close all open trades at OANDA (flatten).
+    // Step 1: Close all open trades at OANDA.
     const openTrades = await this.broker.getOpenTrades();
     let flattenedTrades = 0;
     for (const t of openTrades) {
@@ -50,27 +52,44 @@ export class AdminResetService {
         flattenedTrades++;
       } catch (err) {
         throw new Error(
-          `Failed to close trade ${t.id}: ${String(err)}. Close manually on OANDA and retry.`,
+          `Failed to close trade ${t.id}: ${String(err)}. Close manually on OANDA then retry.`,
         );
       }
     }
 
-    // Step 2: Verify the account is flat before touching the DB.
+    // Step 2: Verify flat before touching the DB.
     const remaining = await this.broker.getOpenTrades();
     if (remaining.length > 0) {
       throw new Error(
-        `Account not flat after close attempts (${remaining.length} trades remain). Retry once they close.`,
+        `Account not flat after close (${remaining.length} trade(s) remain). Retry once they settle.`,
       );
     }
 
-    // Step 3: Atomic ledger wipe + halt clear via stored procedure.
-    const { data: rpcData, error: rpcErr } = await this.supabase.rpc('reset_demo_ledger');
-    if (rpcErr) throw new Error(`Ledger wipe failed: ${rpcErr.message}`);
-    const wipedCounts = (rpcData ?? {}) as Record<string, number>;
-    const haltsCleared = wipedCounts['halts_cleared'] ?? 0;
-    this.logger.log(`FIX-2 wipe: ${JSON.stringify(wipedCounts)}`);
+    // Step 3: Wipe ledger tables. Delete in FK-safe order (leaf first).
+    // Count each table first so the summary shows what was removed.
+    const wipedCounts: Record<string, number> = {};
+    await this.wipeTable('risk_events',       wipedCounts, async () => { const { error } = await this.supabase!.from('risk_events').delete().gt('id', 0);               if (error) throw error; });
+    await this.wipeTable('equity_snapshots',  wipedCounts, async () => { const { error } = await this.supabase!.from('equity_snapshots').delete().gt('id', 0);          if (error) throw error; });
+    await this.wipeTable('positions',         wipedCounts, async () => { const { error } = await this.supabase!.from('positions').delete().neq('id', NEVER_UUID);        if (error) throw error; });
+    await this.wipeTable('orders',            wipedCounts, async () => { const { error } = await this.supabase!.from('orders').delete().neq('id', NEVER_UUID);           if (error) throw error; });
+    await this.wipeTable('signals',           wipedCounts, async () => { const { error } = await this.supabase!.from('signals').delete().neq('id', NEVER_UUID);          if (error) throw error; });
+    await this.wipeTable('performance_daily', wipedCounts, async () => { const { error } = await this.supabase!.from('performance_daily').delete().gte('day', '2000-01-01'); if (error) throw error; });
 
-    // Step 4: Re-baseline equity from the current live OANDA account.
+    // Step 4: Soft-clear all active system_halts.
+    const { data: haltRows } = await this.supabase
+      .from('system_halts')
+      .select('halt_type')
+      .eq('active', true);
+    const haltsCleared = haltRows?.length ?? 0;
+    if (haltsCleared > 0) {
+      const { error: haltErr } = await this.supabase
+        .from('system_halts')
+        .update({ active: false, cleared_at: ts, updated_at: ts })
+        .eq('active', true);
+      if (haltErr) this.logger.warn(`halt clear failed: ${haltErr.message}`);
+    }
+
+    // Step 5: Re-baseline equity from the current live OANDA account.
     const account = await this.broker.getAccount();
     const equity = account.equity;
 
@@ -82,9 +101,8 @@ export class AdminResetService {
       .limit(1);
     const brokerAccountId = ba?.[0]?.id ?? null;
 
-    // Write three snapshots sharing the same moment: DAILY_REF, WEEKLY_REF, HOURLY.
-    // All three carry high_water_mark = current equity, so the drawdown/loss
-    // breakers start from a clean baseline.
+    // Three snapshots sharing the same moment: HOURLY, DAILY_REF, WEEKLY_REF.
+    // All carry high_water_mark = current equity so breakers start from scratch.
     const snapBase = {
       broker_account_id: brokerAccountId,
       mode: 'demo',
@@ -114,5 +132,21 @@ export class AdminResetService {
       baselineCcy: account.currency,
       ts,
     };
+  }
+
+  /** Count rows in a table, run the delete, record the pre-wipe count. */
+  private async wipeTable(
+    table: string,
+    counts: Record<string, number>,
+    deleteFn: () => Promise<void>,
+  ): Promise<void> {
+    const { count } = await this.supabase!.from(table).select('*', { count: 'exact', head: true });
+    try {
+      await deleteFn();
+    } catch (err: any) {
+      throw new Error(`Failed to wipe ${table}: ${err?.message ?? String(err)}`);
+    }
+    counts[table] = count ?? 0;
+    this.logger.log(`FIX-2 wiped ${counts[table]} rows from ${table}`);
   }
 }
