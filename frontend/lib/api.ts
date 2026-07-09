@@ -16,6 +16,18 @@ export async function execGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** POST /api/exec/close — close a single open trade at market (token injected server-side). */
+export async function execClose(tradeId: string): Promise<{ ok: true; closePrice?: number; realizedPl?: number; realizedR?: number | null }> {
+  const res = await fetch('/api/exec/close', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tradeId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.message || data?.error || `close failed (${res.status})`);
+  return data;
+}
+
 /** POST /api/exec/halt — sets a manual halt (token injected server-side). */
 export async function execHalt(): Promise<{ ok: true }> {
   const res = await fetch('/api/exec/halt', {

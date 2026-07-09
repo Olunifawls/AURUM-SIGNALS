@@ -33,6 +33,8 @@ export interface Level2Config {
   maxSlippagePoints: number;
   newsBlackoutEnabled: boolean;
   autoTradeEnabled: boolean;
+  breakevenStopEnabled: boolean;
+  breakevenBufferPoints: number;
 }
 
 export function level2Config(): Level2Config {
@@ -56,5 +58,7 @@ export function level2Config(): Level2Config {
     maxSlippagePoints: num(process.env.MAX_SLIPPAGE_POINTS, 0.5),
     newsBlackoutEnabled: bool(process.env.NEWS_BLACKOUT_ENABLED, true),
     autoTradeEnabled: bool(process.env.AUTO_TRADE_ENABLED, true),
+    breakevenStopEnabled: bool(process.env.BREAKEVEN_STOP_ENABLED, false),
+    breakevenBufferPoints: num(process.env.BREAKEVEN_BUFFER_POINTS, 0.1),
   };
 }

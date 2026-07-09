@@ -137,6 +137,59 @@ export class ExecutionReadService {
     return { ok: true };
   }
 
+  /**
+   * POST /close — close a single open demo trade at market (owner-authorized via
+   * admin token; demo only). Closes at broker, marks position CLOSED/MANUAL in DB,
+   * logs a risk_event. The next reconcile cycle will see the position is already
+   * CLOSED and leave it untouched.
+   */
+  async closeTrade(brokerTradeId: string): Promise<{ ok: true; positionId: string | null; closePrice: number; realizedPl: number; realizedR: number | null }> {
+    const db = this.db();
+
+    // Find the open position in the DB.
+    const { data: rows } = await db
+      .from('positions')
+      .select('id,entry_price,stop_loss,take_profit,side,mode')
+      .eq('broker_trade_id', brokerTradeId)
+      .eq('status', 'OPEN')
+      .limit(1);
+    const pos = rows?.[0] ?? null;
+
+    // Close at broker (idempotent — if already closed, getTrade will confirm).
+    await this.broker.closeTrade(brokerTradeId).catch(() => undefined);
+
+    // Fetch the closed trade state for close price and realized P/L.
+    const trade = await this.broker.getTrade(brokerTradeId);
+    const closePrice = trade.closePrice ?? Number(pos?.entry_price ?? 0);
+    const realizedPl = trade.realizedPl ?? 0;
+    const realizedR = pos
+      ? (await import('../execution/exec-util')).realizedR(Number(pos.entry_price), Number(pos.stop_loss), closePrice, pos.side)
+      : null;
+
+    const now = new Date().toISOString();
+    if (pos) {
+      await db.from('positions').update({
+        status: 'CLOSED',
+        close_reason: 'MANUAL',
+        closed_at: now,
+        close_price: closePrice,
+        realized_pl: realizedPl,
+        realized_r: realizedR,
+        updated_at: now,
+      }).eq('id', pos.id);
+    }
+
+    await db.from('risk_events').insert({
+      mode: pos?.mode ?? 'demo',
+      event_type: 'MANUAL_CLOSE',
+      severity: 'WARN',
+      message: `manual close trade ${brokerTradeId}: price=${closePrice} pl=${realizedPl}`,
+      meta: { brokerTradeId, positionId: pos?.id ?? null, closePrice, realizedPl, realizedR },
+    });
+
+    return { ok: true, positionId: pos?.id ?? null, closePrice, realizedPl, realizedR };
+  }
+
   private async latestRef(type: 'DAILY_REF' | 'WEEKLY_REF'): Promise<number | null> {
     const { data } = await this.db().from('equity_snapshots').select('equity').eq('snapshot_type', type).order('ts', { ascending: false }).limit(1);
     return data?.length ? Number(data[0].equity) : null;

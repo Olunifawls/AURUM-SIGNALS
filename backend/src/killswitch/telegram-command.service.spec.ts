@@ -27,6 +27,7 @@ function makeAdapter() {
 }
 
 const alerts = () => ({ send: jest.fn(async () => true) } as any);
+const weeklyReport = () => ({ buildReport: jest.fn(async () => 'report text') } as any);
 const msg = (id: number, text: string) => ({ message: { chat: { id }, text } });
 
 describe('(d) COMMAND AUTH', () => {
@@ -37,7 +38,7 @@ describe('(d) COMMAND AUTH', () => {
   it('ignores a command from a non-owner chat (silently, no action)', async () => {
     const state = makeState();
     const a = alerts();
-    const svc = new TelegramCommandService(makeSupabase().client, makeAdapter(), state, a);
+    const svc = new TelegramCommandService(makeSupabase().client, makeAdapter(), state, a, weeklyReport());
     await svc.handleUpdate(msg(123456, '/halt')); // not the owner
     expect(state.setHalt).not.toHaveBeenCalled();
     expect(a.send).not.toHaveBeenCalled();
@@ -46,7 +47,7 @@ describe('(d) COMMAND AUTH', () => {
   it('acts on a command from the owner chat', async () => {
     const state = makeState();
     const a = alerts();
-    const svc = new TelegramCommandService(makeSupabase().client, makeAdapter(), state, a);
+    const svc = new TelegramCommandService(makeSupabase().client, makeAdapter(), state, a, weeklyReport());
     await svc.handleUpdate(msg(555, '/halt'));
     expect(state.setHalt).toHaveBeenCalledWith('MANUAL_HALT', expect.anything());
     expect(a.send).toHaveBeenCalled();
@@ -62,7 +63,7 @@ describe('(b) /halt_close_all requires exact confirmation', () => {
     const { client } = makeSupabase([{ id: 'p1', broker_trade_id: 'T1' }]);
     const adapter = makeAdapter();
     const state = makeState();
-    const svc = new TelegramCommandService(client, adapter, state, alerts());
+    const svc = new TelegramCommandService(client, adapter, state, alerts(), weeklyReport());
 
     await svc.handleUpdate(msg(555, '/halt_close_all'));
     expect(adapter.closeTrade).not.toHaveBeenCalled(); // nothing closed yet
@@ -75,7 +76,7 @@ describe('(b) /halt_close_all requires exact confirmation', () => {
   it('does NOT close on a wrong confirmation', async () => {
     const { client } = makeSupabase([{ id: 'p1', broker_trade_id: 'T1' }]);
     const adapter = makeAdapter();
-    const svc = new TelegramCommandService(client, adapter, makeState(), alerts());
+    const svc = new TelegramCommandService(client, adapter, makeState(), alerts(), weeklyReport());
 
     await svc.handleUpdate(msg(555, '/halt_close_all'));
     await svc.handleUpdate(msg(555, 'CONFIRM')); // wrong text
@@ -84,7 +85,7 @@ describe('(b) /halt_close_all requires exact confirmation', () => {
 
   it('/mode never offers a live switch', async () => {
     const a = alerts();
-    const svc = new TelegramCommandService(makeSupabase().client, makeAdapter(), makeState(), a);
+    const svc = new TelegramCommandService(makeSupabase().client, makeAdapter(), makeState(), a, weeklyReport());
     await svc.handleUpdate(msg(555, '/mode'));
     const sent = a.send.mock.calls[0][0] as string;
     expect(sent).toContain('DEMO');

@@ -90,6 +90,7 @@ export interface IBrokerAdapter {
   getOpenTrades(): Promise<BrokerTrade[]>;
   placeMarketOrder(params: PlaceMarketOrderParams): Promise<PlaceMarketOrderResult>;
   closeTrade(tradeId: string): Promise<{ closed: boolean; raw?: unknown }>;
+  modifyTradeSL(tradeId: string, stopLoss: number): Promise<{ modified: boolean; raw?: unknown }>;
   getTransactionsSince(id: string): Promise<BrokerTransaction[]>;
   getPricing(instrument: string): Promise<Pricing>;
   getInstrument(instrument: string): Promise<InstrumentInfo>;

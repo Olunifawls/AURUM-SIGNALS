@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { execGet, execHalt } from '../../lib/api';
+import { execClose, execGet, execHalt } from '../../lib/api';
 import { fmtPrice, fmtSignedR, num, relTime } from '../../lib/format';
 import { ExecEquity, ExecOrder, ExecPosition, ExecRiskEvent, ExecState } from '../../lib/types';
 
@@ -66,6 +66,9 @@ export default function ExecutionPage() {
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [halting, setHalting] = useState(false);
+  const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  const [closeResult, setCloseResult] = useState<{ realizedPl?: number; closePrice?: number; realizedR?: number | null } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -103,6 +106,22 @@ export default function ExecutionPage() {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
       setHalting(false);
+    }
+  }
+
+  async function doClose(tradeId: string) {
+    setClosing(true);
+    setError(null);
+    try {
+      const result = await execClose(tradeId);
+      setCloseResult({ realizedPl: result.realizedPl, closePrice: result.closePrice, realizedR: result.realizedR });
+      setClosingTradeId(null);
+      await load();
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+      setClosingTradeId(null);
+    } finally {
+      setClosing(false);
     }
   }
 
@@ -179,11 +198,19 @@ export default function ExecutionPage() {
 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-neutral-300">Open positions</h2>
+        {closeResult && (
+          <div className="mb-2 rounded-md border border-emerald-700 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-300">
+            Trade closed at {closeResult.closePrice != null ? fmtPrice(closeResult.closePrice) : '—'}
+            {closeResult.realizedPl != null ? ` · P/L: ${signed(closeResult.realizedPl, ccy)}` : ''}
+            {closeResult.realizedR != null ? ` · ${fmtSignedR(closeResult.realizedR)}R` : ''}
+            <button onClick={() => setCloseResult(null)} className="ml-3 text-xs text-emerald-400/70 hover:text-emerald-300">✕</button>
+          </div>
+        )}
         {positions.length === 0 ? (
           <EmptyState text="No open positions — that's normal." />
         ) : (
           <Table
-            head={['Opened', 'TF', 'Side', 'Units', 'Entry', 'SL', 'TP', 'Slip', 'Live P/L']}
+            head={['Opened', 'TF', 'Side', 'Units', 'Entry', 'SL', 'TP', 'Slip', 'Live P/L', '']}
             rows={positions.map((p) => [
               relTime(p.opened_at),
               p.timeframe ?? '—',
@@ -194,6 +221,15 @@ export default function ExecutionPage() {
               fmtPrice(p.take_profit),
               p.slippage_points != null ? fmtPrice(p.slippage_points, 3) : '—',
               <span key="pl" className={pnlColor(num(p.live_pl))}>{signed(num(p.live_pl), ccy)}</span>,
+              p.broker_trade_id ? (
+                <button
+                  key="cl"
+                  onClick={() => setClosingTradeId(p.broker_trade_id!)}
+                  className="rounded px-2 py-0.5 text-xs border border-red-700 text-red-300 hover:bg-red-900/40"
+                >
+                  Close
+                </button>
+              ) : <span key="cl">—</span>,
             ])}
           />
         )}
@@ -242,6 +278,34 @@ export default function ExecutionPage() {
           </div>
         )}
       </section>
+
+      {closingTradeId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-lg border border-neutral-700 bg-neutral-900 p-5">
+            <h3 className="text-base font-semibold">Close this trade at market?</h3>
+            <p className="mt-2 text-sm text-neutral-400">
+              Trade <span className="font-mono text-neutral-200">{closingTradeId}</span> will be closed at the current
+              market price via OANDA. This cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setClosingTradeId(null)}
+                disabled={closing}
+                className="rounded-md px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void doClose(closingTradeId)}
+                disabled={closing}
+                className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {closing ? 'Closing…' : 'Close trade'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirming && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">

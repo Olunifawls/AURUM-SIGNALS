@@ -196,6 +196,17 @@ export class OandaAdapter implements IBrokerAdapter {
     return { closed: !!json.orderFillTransaction, raw: json };
   }
 
+  async modifyTradeSL(tradeId: string, stopLoss: number): Promise<{ modified: boolean; raw?: unknown }> {
+    const body = { stopLoss: { price: this.fmtPrice(stopLoss), timeInForce: 'GTC' } };
+    const { status, json } = await this.request(
+      'PUT',
+      `/v3/accounts/${this.account}/trades/${tradeId}/orders`,
+      body,
+      { retry: false },
+    );
+    return { modified: status === 200, raw: json };
+  }
+
   async getTrade(tradeId: string): Promise<import('./broker.interface').BrokerTradeState> {
     const { json } = await this.request('GET', `/v3/accounts/${this.account}/trades/${tradeId}`, undefined, {
       retry: true,

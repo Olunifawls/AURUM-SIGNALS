@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { AdminTokenGuard } from '../common/admin-token.guard';
 import { ExecutionReadService } from './execution-read.service';
 
@@ -40,5 +40,18 @@ export class ExecutionReadController {
   @Post('halt')
   halt() {
     return this.exec.setManualHalt();
+  }
+
+  /**
+   * POST /api/execution/close — close a single open trade at market.
+   * Admin-token gated (same guard as /halt). DEMO only (owner's own trade).
+   * Body: { tradeId: string } — the broker trade ID (broker_trade_id from positions).
+   */
+  @Post('close')
+  @HttpCode(200)
+  close(@Body() body: { tradeId?: string }) {
+    const tradeId = (body?.tradeId ?? '').trim();
+    if (!tradeId) return { ok: false, error: 'tradeId is required' };
+    return this.exec.closeTrade(tradeId);
   }
 }

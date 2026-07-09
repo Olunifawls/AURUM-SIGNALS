@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 import { AlertsService } from '../alerts/alerts.service';
+import { WeeklyReportService } from '../alerts/weekly-report.service';
 import { TradingStateService } from '../risk/trading-state.service';
 import { level2Config } from '../level2/level2.config';
 import { scrubString } from './scrub';
@@ -26,6 +27,7 @@ export class TelegramCommandService implements OnModuleInit, OnModuleDestroy {
     @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
     private readonly state: TradingStateService,
     private readonly alerts: AlertsService,
+    private readonly weeklyReport: WeeklyReportService,
   ) {}
 
   private get ownerChatId(): string | undefined {
@@ -119,8 +121,10 @@ export class TelegramCommandService implements OnModuleInit, OnModuleDestroy {
         return this.resume();
       case '/mode':
         return this.reply(`Mode: ${level2Config().tradingMode.toUpperCase()} (DEMO only). Switching to live is NOT available via Telegram — env + redeploy + gate only.`);
+      case '/report':
+        return this.sendReport();
       default:
-        return this.reply('Commands: /status /halt /halt_close_all /resume /mode');
+        return this.reply('Commands: /status /halt /halt_close_all /resume /mode /report');
     }
   }
 
@@ -156,6 +160,15 @@ export class TelegramCommandService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return this.reply(`🛑 Halted and closed ${closed} open position(s) at market.`);
+  }
+
+  private async sendReport(): Promise<void> {
+    try {
+      const text = await this.weeklyReport.buildReport(new Date());
+      await this.reply(text);
+    } catch (err) {
+      await this.reply(`❌ Report failed: ${scrubString(String(err))}`);
+    }
   }
 
   private async status(): Promise<void> {
