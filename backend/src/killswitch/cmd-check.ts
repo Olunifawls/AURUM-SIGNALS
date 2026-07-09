@@ -11,6 +11,7 @@ import { WebSocket as WsWebSocket } from 'ws';
 import { createClient } from '@supabase/supabase-js';
 import { OandaAdapter } from '../broker/oanda.adapter';
 import { AlertsService } from '../alerts/alerts.service';
+import { WeeklyReportService } from '../alerts/weekly-report.service';
 import { TradingStateService } from '../risk/trading-state.service';
 import { TelegramCommandService } from './telegram-command.service';
 
@@ -23,8 +24,9 @@ async function main(): Promise<void> {
   });
   const adapter = new OandaAdapter();
   const alerts = new AlertsService(sb as never);
+  const weeklyReport = new WeeklyReportService(sb as never, adapter, alerts);
   const state = new TradingStateService(sb as never);
-  const cmd = new TelegramCommandService(sb as never, adapter, state, alerts);
+  const cmd = new TelegramCommandService(sb as never, adapter, state, alerts, weeklyReport);
 
   const arg = process.argv[2] ?? '/status';
   console.log(`sending owner command "${arg}" -> Telegram reply ...`);
