@@ -12,6 +12,7 @@
     "test": "echo \"No frontend unit tests in INC-0\" && exit 0"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.45.0",
     "lightweight-charts": "^4.2.3",
     "next": "^14.2.5",

@@ -10,6 +10,7 @@ const LINKS = [
   { href: '/performance', label: 'Performance' },
   { href: '/execution', label: 'Execution' },
   { href: '/settings', label: 'Settings' },
+  { href: '/profile', label: 'Profile' },
 ];
 
 export default function Nav() {
