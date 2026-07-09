@@ -13,6 +13,8 @@ export const OUTPUT_SIZE = 300;
 /** Provider names used for circuit breakers / rate budget / health. */
 export const PROVIDER_TWELVE_DATA = 'twelvedata';
 export const PROVIDER_GOLD_API = 'goldapi';
+/** FIX-1: OANDA is now the single candle/FX source. */
+export const PROVIDER_OANDA = 'oanda';
 
 /** Source string used for system_events rows written by this module. */
 export const EVENT_SOURCE = 'ingestion';

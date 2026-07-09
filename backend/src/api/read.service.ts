@@ -180,7 +180,8 @@ export class ReadService {
     const indRes = await db
       .from('indicator_snapshots')
       .select('timeframe,ts,rsi_14,macd,macd_signal,macd_hist,ema_20,ema_50,ema_200,atr_14,nearest_support,nearest_resistance')
-      .eq('symbol', SYMBOL);
+      .eq('symbol', SYMBOL)
+      .order('ts', { ascending: true }); // snapshots accumulate now; keep latest per tf (last write wins)
     if (indRes.error) throw new Error(`indicators query failed: ${indRes.error.message}`);
     const indicators: Record<string, unknown> = {};
     for (const tf of TIMEFRAMES) indicators[tf] = null;

@@ -178,8 +178,11 @@ export class TrackerService {
     if (del.error) throw new Error(`performance_daily clear failed: ${del.error.message}`);
 
     if (perf.length > 0) {
-      const ins = await this.supabase!.from('performance_daily').insert(perf);
-      if (ins.error) throw new Error(`performance_daily insert failed: ${ins.error.message}`);
+      // UPSERT on the primary key `day` (not INSERT): the tracker runs from several
+      // staggered ingestion cycles, so concurrent recomputes previously collided on
+      // performance_daily_pkey. Upsert is race-safe and idempotent.
+      const ins = await this.supabase!.from('performance_daily').upsert(perf, { onConflict: 'day' });
+      if (ins.error) throw new Error(`performance_daily upsert failed: ${ins.error.message}`);
     }
     return perf.length;
   }

@@ -68,35 +68,32 @@ export class IndicatorsService {
   }
 
   /**
-   * Keep exactly one CURRENT snapshot per (symbol, timeframe). indicator_snapshots
-   * has no natural unique key, so we replace (delete + insert) rather than add a
-   * schema constraint. Simplest option consistent with "one current row per tf".
+   * FIX-1: accumulate a snapshot per (symbol, timeframe, ts) via UPSERT (unique
+   * index uq_indsnap_sym_tf_ts). History accrues (one row per closed candle);
+   * re-running on the same ts overwrites that row idempotently. Readers take the
+   * latest per timeframe. Replaces the old delete+insert (which kept only 4 rows).
    */
   private async replaceSnapshot(tf: Timeframe, v: IndicatorValues): Promise<void> {
     if (!this.supabase) throw new Error('Supabase client not configured');
 
-    const del = await this.supabase
-      .from('indicator_snapshots')
-      .delete()
-      .eq('symbol', SYMBOL)
-      .eq('timeframe', tf);
-    if (del.error) throw new Error(`indicator_snapshots delete failed: ${del.error.message}`);
-
-    const ins = await this.supabase.from('indicator_snapshots').insert({
-      symbol: SYMBOL,
-      timeframe: tf,
-      ts: v.ts,
-      rsi_14: v.rsi_14,
-      macd: v.macd,
-      macd_signal: v.macd_signal,
-      macd_hist: v.macd_hist,
-      ema_20: v.ema_20,
-      ema_50: v.ema_50,
-      ema_200: v.ema_200,
-      atr_14: v.atr_14,
-      nearest_support: v.nearest_support,
-      nearest_resistance: v.nearest_resistance,
-    });
-    if (ins.error) throw new Error(`indicator_snapshots insert failed: ${ins.error.message}`);
+    const up = await this.supabase.from('indicator_snapshots').upsert(
+      {
+        symbol: SYMBOL,
+        timeframe: tf,
+        ts: v.ts,
+        rsi_14: v.rsi_14,
+        macd: v.macd,
+        macd_signal: v.macd_signal,
+        macd_hist: v.macd_hist,
+        ema_20: v.ema_20,
+        ema_50: v.ema_50,
+        ema_200: v.ema_200,
+        atr_14: v.atr_14,
+        nearest_support: v.nearest_support,
+        nearest_resistance: v.nearest_resistance,
+      },
+      { onConflict: 'symbol,timeframe,ts' },
+    );
+    if (up.error) throw new Error(`indicator_snapshots upsert failed: ${up.error.message}`);
   }
 }

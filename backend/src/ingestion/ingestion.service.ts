@@ -8,20 +8,11 @@ import { SignalsService } from '../signals/signals.service';
 import { TrackerService } from '../tracker/tracker.service';
 import { RateBudgetService } from './rate-budget.service';
 import { CircuitBreakerRegistry } from './circuit-breaker';
-import { TwelveDataService, CandleRow } from './twelve-data.service';
-import { GoldApiService } from './gold-api.service';
+import { OandaCandlesService, CandleRow } from './oanda-candles.service';
 import { withRetry } from './resilience';
 import { isGoldMarketOpen } from './market-hours';
 import { computeStale } from './health-util';
-import {
-  EVENT_SOURCE,
-  FX_PAIR,
-  PROVIDER_GOLD_API,
-  PROVIDER_TWELVE_DATA,
-  SYMBOL,
-  TIMEFRAMES,
-  Timeframe,
-} from './ingestion.constants';
+import { EVENT_SOURCE, FX_PAIR, PROVIDER_OANDA, SYMBOL, TIMEFRAMES, Timeframe } from './ingestion.constants';
 
 export interface IngestionHealth {
   ts: string;
@@ -34,10 +25,11 @@ export interface IngestionHealth {
 }
 
 /**
- * INC-1 ingestion pipeline: staggered per-timeframe crons pull XAU/USD candles
- * and GBP/USD FX from Twelve Data and upsert them into Supabase. All external
- * calls go through retry + timeout + circuit-breaker; a Twelve Data outage
- * triggers a GoldAPI liveness fallback. No indicators / signals here.
+ * Ingestion pipeline (FIX-1): staggered per-timeframe crons pull XAU/USD candles
+ * and GBP/USD FX from OANDA (the same feed we execute on) and store them. Only
+ * COMPLETE bars are written, WRITE-ONCE (immutable) — a stored bar is never
+ * overwritten. Post-ingestion compute (indicators / signals / tracker) runs with
+ * each step ISOLATED so one failure can never abort the others.
  */
 @Injectable()
 export class IngestionService implements OnModuleInit {
@@ -53,8 +45,7 @@ export class IngestionService implements OnModuleInit {
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
-    private readonly twelveData: TwelveDataService,
-    private readonly goldApi: GoldApiService,
+    private readonly oanda: OandaCandlesService,
     private readonly events: SystemEventsService,
     private readonly rateBudget: RateBudgetService,
     private readonly breakers: CircuitBreakerRegistry,
@@ -64,7 +55,6 @@ export class IngestionService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    // Fire-and-forget so a slow/failing provider never blocks or crashes boot.
     void this.seed();
   }
 
@@ -73,54 +63,30 @@ export class IngestionService implements OnModuleInit {
   handle15min(): Promise<void> {
     return this.ingestTimeframe('15min');
   }
-
   @Cron('*/15 * * * *')
   handle1h(): Promise<void> {
     return this.ingestTimeframe('1h');
   }
-
   @Cron('0 * * * *')
   handle4h(): Promise<void> {
     return this.ingestTimeframe('4h');
   }
-
   @Cron('0 1 * * *')
   handle1day(): Promise<void> {
     return this.ingestTimeframe('1day');
   }
-
   @Cron('*/30 * * * *')
   handleFx(): Promise<void> {
     return this.ingestFx();
   }
 
-  @Cron('0 0 * * *')
-  async dailyRollup(): Promise<void> {
-    const snap = this.rateBudget.snapshot();
-    await this.events.info(
-      EVENT_SOURCE,
-      `daily rate-budget rollup: ${JSON.stringify(snap.counts)} ` +
-        `(nominal ${snap.estimateNominalPerDay}/day, gated avg ${snap.estimateGatedPerDay}/day, limit ${snap.dailyLimit})`,
-      snap,
-    );
-  }
-
   // --------------------------------------------------------------- startup
-  /**
-   * Startup seed. DELIBERATE CHOICE: the seed BYPASSES the market-hours gate so
-   * the tables are populated immediately even on a weekend (INC-2 indicators
-   * need >= 250 candles to build on). Regular crons still respect the gate.
-   */
+  /** Startup seed (bypasses the market-hours gate so tables populate immediately). */
   async seed(): Promise<void> {
-    await this.events.info(EVENT_SOURCE, 'startup seed starting (market-hours gate bypassed for seed)');
-    for (const tf of TIMEFRAMES) {
-      await this.ingestTimeframe(tf, { bypassGate: true });
-    }
+    await this.events.info(EVENT_SOURCE, 'startup seed starting (OANDA source; market-hours gate bypassed for seed)');
+    for (const tf of TIMEFRAMES) await this.ingestTimeframe(tf, { bypassGate: true });
     await this.ingestFx({ bypassGate: true });
-    await this.events.info(EVENT_SOURCE, 'startup seed complete', {
-      lastSuccess: this.lastSuccess,
-      lastFxTs: this.lastFxTs,
-    });
+    await this.events.info(EVENT_SOURCE, 'startup seed complete', { lastSuccess: this.lastSuccess, lastFxTs: this.lastFxTs });
   }
 
   // -------------------------------------------------------------- timeframe
@@ -130,49 +96,35 @@ export class IngestionService implements OnModuleInit {
       await this.events.info(EVENT_SOURCE, 'market closed, skipped', { timeframe: tf });
       return;
     }
-
-    const breaker = this.breakers.get(PROVIDER_TWELVE_DATA);
+    const breaker = this.breakers.get(PROVIDER_OANDA);
     if (breaker.isOpen()) {
-      await this.events.warn(EVENT_SOURCE, 'circuit open for twelvedata, skipping cycle', {
-        timeframe: tf,
-        consecutiveFailures: breaker.consecutiveFailures,
-      });
+      await this.events.warn(EVENT_SOURCE, 'circuit open for oanda, skipping cycle', { timeframe: tf, consecutiveFailures: breaker.consecutiveFailures });
       return;
     }
 
     try {
-      const candles = await withRetry(() => this.twelveData.fetchTimeSeries(tf), { retries: 3 });
-      const count = await this.upsertCandles(tf, candles);
+      const candles = await withRetry(() => this.oanda.fetchCandles(tf), { retries: 3 });
+      const written = await this.storeCandlesImmutable(tf, candles);
       breaker.recordSuccess();
       this.lastSuccess[tf] = new Date().toISOString();
-      this.logger.log(`ingested ${count} ${tf} candles`);
-
-      // INC-2: compute indicator snapshot for this timeframe. Failures here must
-      // not affect ingestion, so they are caught and logged separately.
-      try {
-        await this.indicators.computeForTimeframe(tf);
-        // INC-3: run the signal engine for this timeframe (service decides which
-        // timeframes are traded). Isolated from ingestion the same way.
-        await this.signals.evaluateForTimeframe(tf);
-        // INC-4: resolve OPEN signals + recompute performance_daily. Idempotent,
-        // so running it each cycle is safe.
-        await this.tracker.run();
-      } catch (indErr) {
-        await this.events.warn(EVENT_SOURCE, `post-ingestion compute failed for ${tf}`, {
-          timeframe: tf,
-          error: String(indErr),
-        });
-      }
+      this.logger.log(`ingested ${written} new ${tf} candles from OANDA (${candles.length} complete fetched)`);
     } catch (err) {
       breaker.recordFailure();
-      await this.events.warn(EVENT_SOURCE, `twelvedata ${tf} fetch failed`, {
-        timeframe: tf,
-        error: String(err),
-        consecutiveFailures: breaker.consecutiveFailures,
-      });
-      if (breaker.justTripped()) {
-        await this.runFallback();
-      }
+      await this.events.warn(EVENT_SOURCE, `oanda ${tf} fetch failed`, { timeframe: tf, error: String(err), consecutiveFailures: breaker.consecutiveFailures });
+      return;
+    }
+
+    // Post-ingestion compute — each step ISOLATED (a failure in one can NEVER abort another).
+    await this.runStep('indicators', tf, () => this.indicators.computeForTimeframe(tf));
+    await this.runStep('signals', tf, () => this.signals.evaluateForTimeframe(tf));
+    await this.runStep('tracker', tf, () => this.tracker.run());
+  }
+
+  private async runStep(step: string, tf: Timeframe, fn: () => Promise<unknown>): Promise<void> {
+    try {
+      await fn();
+    } catch (err) {
+      await this.events.warn(EVENT_SOURCE, `${step} step failed for ${tf}`, { step, timeframe: tf, error: String(err) });
     }
   }
 
@@ -183,64 +135,28 @@ export class IngestionService implements OnModuleInit {
       await this.events.info(EVENT_SOURCE, 'market closed, skipped', { source: 'fx' });
       return;
     }
-
-    const breaker = this.breakers.get(PROVIDER_TWELVE_DATA);
-    if (breaker.isOpen()) {
-      await this.events.warn(EVENT_SOURCE, 'circuit open for twelvedata, skipping FX cycle', {
-        consecutiveFailures: breaker.consecutiveFailures,
-      });
-      return;
-    }
-
+    const breaker = this.breakers.get(PROVIDER_OANDA);
+    if (breaker.isOpen()) return;
     try {
-      const fx = await withRetry(() => this.twelveData.fetchExchangeRate(), { retries: 3 });
+      const fx = await withRetry(() => this.oanda.fetchFx(), { retries: 3 });
       await this.upsertFx(fx.rate, fx.ts);
       breaker.recordSuccess();
       this.lastFxTs = new Date().toISOString();
-      this.logger.log(`ingested FX ${FX_PAIR}=${fx.rate}`);
+      this.logger.log(`ingested FX ${FX_PAIR}=${fx.rate} from OANDA`);
     } catch (err) {
       breaker.recordFailure();
-      await this.events.warn(EVENT_SOURCE, 'twelvedata FX fetch failed', {
-        error: String(err),
-        consecutiveFailures: breaker.consecutiveFailures,
-      });
-      if (breaker.justTripped()) {
-        await this.runFallback();
-      }
+      await this.events.warn(EVENT_SOURCE, 'oanda FX fetch failed', { error: String(err), consecutiveFailures: breaker.consecutiveFailures });
     }
   }
 
-  // --------------------------------------------------------------- fallback
+  // ----------------------------------------------------------------- store
   /**
-   * Liveness fallback: Twelve Data has failed the threshold consecutive times.
-   * Fetch a GoldAPI spot price and record it as a WARN. We do NOT fabricate
-   * candles from it.
+   * WRITE-ONCE store. `ignoreDuplicates: true` => INSERT ... ON CONFLICT DO
+   * NOTHING, so an already-stored complete bar is NEVER overwritten (no mutation).
    */
-  private async runFallback(): Promise<void> {
-    const goldBreaker = this.breakers.get(PROVIDER_GOLD_API);
-    try {
-      const spot = await withRetry(() => this.goldApi.fetchSpot(), { retries: 3 });
-      goldBreaker.recordSuccess();
-      await this.events.warn(
-        EVENT_SOURCE,
-        `Twelve Data unavailable; GoldAPI fallback spot ${SYMBOL}=${spot}`,
-        { provider: PROVIDER_GOLD_API, spot },
-      );
-    } catch (err) {
-      goldBreaker.recordFailure();
-      await this.events.warn(
-        EVENT_SOURCE,
-        'Twelve Data unavailable AND GoldAPI fallback failed',
-        { provider: PROVIDER_GOLD_API, error: String(err) },
-      );
-    }
-  }
-
-  // ----------------------------------------------------------------- upsert
-  private async upsertCandles(tf: Timeframe, candles: CandleRow[]): Promise<number> {
+  private async storeCandlesImmutable(tf: Timeframe, candles: CandleRow[]): Promise<number> {
     if (!this.supabase) throw new Error('Supabase client not configured');
     if (candles.length === 0) return 0;
-
     const rows = candles.map((c) => ({
       symbol: SYMBOL,
       timeframe: tf,
@@ -251,19 +167,16 @@ export class IngestionService implements OnModuleInit {
       close: c.close,
       volume: c.volume,
     }));
-
-    const { error } = await this.supabase
+    const { error, count } = await this.supabase
       .from('candles')
-      .upsert(rows, { onConflict: 'symbol,timeframe,ts', ignoreDuplicates: false });
-    if (error) throw new Error(`candles upsert failed: ${error.message}`);
-    return rows.length;
+      .upsert(rows, { onConflict: 'symbol,timeframe,ts', ignoreDuplicates: true, count: 'exact' });
+    if (error) throw new Error(`candles insert failed: ${error.message}`);
+    return count ?? 0;
   }
 
   private async upsertFx(rate: number, ts: string): Promise<void> {
     if (!this.supabase) throw new Error('Supabase client not configured');
-    const { error } = await this.supabase
-      .from('fx_rates')
-      .upsert({ pair: FX_PAIR, rate, ts }, { onConflict: 'pair,ts', ignoreDuplicates: false });
+    const { error } = await this.supabase.from('fx_rates').upsert({ pair: FX_PAIR, rate, ts }, { onConflict: 'pair,ts', ignoreDuplicates: false });
     if (error) throw new Error(`fx_rates upsert failed: ${error.message}`);
   }
 
@@ -275,9 +188,7 @@ export class IngestionService implements OnModuleInit {
       ts: now.toISOString(),
       marketOpen,
       stale: computeStale(this.lastSuccess['15min'], now, marketOpen),
-      timeframes: Object.fromEntries(
-        TIMEFRAMES.map((tf) => [tf, { lastIngestionTs: this.lastSuccess[tf] }]),
-      ),
+      timeframes: Object.fromEntries(TIMEFRAMES.map((tf) => [tf, { lastIngestionTs: this.lastSuccess[tf] }])),
       fx: { lastTs: this.lastFxTs },
       sources: this.breakers.snapshot(),
       rateBudget: this.rateBudget.snapshot(),
