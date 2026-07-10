@@ -342,6 +342,50 @@ describe('(d) testFireBreaker — admin synthetic-input fire path', () => {
   });
 });
 
+// ─── FEED_STALE — staleness measured from bar CLOSE time ────────────────────
+//
+// After the fix, lastFeedTs() returns (barOpenTs + 15 min). So the 20-min
+// threshold means "no 15min bar has CLOSED in >20 min."
+//
+//   NOT_STALE_TS: bar opened 14 min ago  → closed 1 min in future  → age < 0 → OK
+//   STALE_TS:     bar opened 36 min ago  → closed 21 min ago        → age > 20 → STALE
+
+describe('FEED_STALE — staleness from bar close time', () => {
+  const NOT_STALE_TS = new Date(NOW.getTime() - 14 * 60_000).toISOString(); // bar open 14m ago
+  const STALE_TS     = new Date(NOW.getTime() - 36 * 60_000).toISOString(); // bar open 36m ago → close 21m ago
+
+  const calmCandle = (ts: string) => ({ timeframe: '15min', ts, open: 4100, high: 4105, low: 4099, close: 4102 });
+  const baseSupabase = (ts: string) =>
+    makeSupabase({
+      equity_snapshots: [{ equity: 10_000, high_water_mark: 10_000 }],
+      candles: [calmCandle(ts)],
+      indicator_snapshots: [
+        { timeframe: '15min', atr_14: 5.2 },
+        { timeframe: '1h',    atr_14: 14.8 },
+        { timeframe: '1day',  atr_14: 94.7 },
+      ],
+      positions: [],
+    });
+
+  it('does NOT fire when the most recent bar closed <20 min ago (healthy cycle)', async () => {
+    const state = makeState();
+    const svc = new CircuitBreakerService(baseSupabase(NOT_STALE_TS), makeBroker(), state, alerts);
+    await svc.runBreakers(NOW);
+    const calls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'FEED_STALE');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('fires FEED_STALE when no bar has closed in >20 min (genuine missed bars)', async () => {
+    const state = makeState();
+    const svc = new CircuitBreakerService(baseSupabase(STALE_TS), makeBroker(), state, alerts);
+    await svc.runBreakers(NOW);
+    expect(state.setHalt).toHaveBeenCalledWith(
+      'FEED_STALE',
+      expect.objectContaining({ scope: 'NEW_ORDERS', requiresManual: false }),
+    );
+  });
+});
+
 // ─── clearsAt time-box (auto-clear rule) ─────────────────────────────────────
 
 describe('(e) clearsAt — timed auto-clear rule encoded in HaltSpec', () => {

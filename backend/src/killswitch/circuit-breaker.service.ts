@@ -233,7 +233,11 @@ export class CircuitBreakerService {
   private async lastFeedTs(): Promise<string | null> {
     if (!this.supabase) return null;
     const { data } = await this.supabase.from('candles').select('ts').eq('symbol', SYMBOL).eq('timeframe', '15min').order('ts', { ascending: false }).limit(1);
-    return data?.length ? (data[0].ts as string) : null;
+    if (!data?.length) return null;
+    // Return bar CLOSE time (open ts + 15 min). The 20-min threshold then means
+    // "no 15min bar has closed in >20 min" — genuinely abnormal. Using the bar's
+    // open ts caused structural false fires (~21 min after every bar's open time).
+    return new Date(new Date(data[0].ts as string).getTime() + 15 * 60_000).toISOString();
   }
 
   /** Latest ATR-14 for the given timeframe from indicator_snapshots. */

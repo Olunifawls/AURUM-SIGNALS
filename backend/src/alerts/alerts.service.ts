@@ -117,9 +117,14 @@ export class AlertsService {
         .eq('timeframe', '15min')
         .order('ts', { ascending: false })
         .limit(1);
-      const lastTs = data && data.length ? (data[0].ts as string) : null;
+      const barOpenTs = data && data.length ? (data[0].ts as string) : null;
+      // Compare against bar CLOSE time (open + 15 min) so staleness means
+      // "no bar has closed in >20 min", not "bar opened >20 min ago".
+      const lastCloseTs = barOpenTs
+        ? new Date(new Date(barOpenTs).getTime() + 15 * 60_000).toISOString()
+        : null;
       const now = new Date();
-      if (isFeedStale(lastTs, now, isGoldMarketOpen(now))) {
+      if (isFeedStale(lastCloseTs, now, isGoldMarketOpen(now))) {
         if (this.heartbeatThrottle.allow('heartbeat')) {
           await this.send(HEARTBEAT_MESSAGE);
         }
