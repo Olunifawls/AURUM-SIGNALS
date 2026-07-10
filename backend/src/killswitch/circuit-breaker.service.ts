@@ -7,7 +7,7 @@ import { AlertsService } from '../alerts/alerts.service';
 import { TradingStateService } from '../risk/trading-state.service';
 import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
-import { isGoldMarketOpen } from '../ingestion/market-hours';
+import { isGoldMarketOpen, isMarketTradeableNow } from '../ingestion/market-hours';
 import {
   HaltSpec,
   evalBrokerErrors,
@@ -149,12 +149,12 @@ export class CircuitBreakerService {
         evalDailyLoss({ dailyLossPct: dailyPct, maxDailyPct: cfg.maxDailyLossPct, now }),
         evalWeeklyLoss({ weeklyLossPct: weeklyPct, maxWeeklyPct: cfg.maxWeeklyLossPct, now }),
         evalConsecutiveSl(await this.recentCloseReasons()),
-        evalFeedStale(await this.lastFeedTs(), now, isGoldMarketOpen(now) && pricing.tradeable),
+        evalFeedStale(await this.lastFeedTs(), now, isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable)),
       ];
       for (const spec of specs) if (spec) await this.applySpec(spec);
 
       // Feed recovered -> auto-clear the stale halt.
-      if (!evalFeedStale(await this.lastFeedTs(), now, isGoldMarketOpen(now) && pricing.tradeable)) {
+      if (!evalFeedStale(await this.lastFeedTs(), now, isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable))) {
         await this.state.clearHalt('FEED_STALE');
       }
 

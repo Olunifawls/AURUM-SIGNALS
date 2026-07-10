@@ -2,8 +2,9 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
+import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 import { SYMBOL } from '../ingestion/ingestion.constants';
-import { isGoldMarketOpen } from '../ingestion/market-hours';
+import { isGoldMarketOpen, isMarketTradeableNow } from '../ingestion/market-hours';
 import { Throttle, ADMIN_THROTTLE_MS } from './throttle';
 import {
   AlertResolution,
@@ -30,7 +31,10 @@ export class AlertsService {
   private readonly adminThrottle = new Throttle(ADMIN_THROTTLE_MS);
   private readonly heartbeatThrottle = new Throttle(ADMIN_THROTTLE_MS);
 
-  constructor(@Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null) {}
+  constructor(
+    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
+    @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
+  ) {}
 
   private get token(): string | undefined {
     return process.env.TELEGRAM_BOT_TOKEN || undefined;
@@ -107,11 +111,20 @@ export class AlertsService {
 
   /** Heartbeat: every 5 min, if the feed is stale during market hours, alert (throttled). */
   @Cron('*/5 * * * *')
-  async heartbeatCheck(): Promise<void> {
+  async heartbeatCheck(now: Date = new Date()): Promise<void> {
     if (!this.supabase) return;
     try {
-      const now = new Date();
+      // Gate 1: calendar hours — fast exit, no OANDA call needed for weekends.
       if (!isGoldMarketOpen(now)) return;
+      // Gate 2: OANDA live tradeable flag catches the ~1h daily demo break (~21:00–22:00 UTC).
+      // If OANDA is unreachable, return without firing — assume market may be in maintenance.
+      let pricing: { tradeable: boolean };
+      try {
+        pricing = await this.broker.getPricing(SYMBOL);
+      } catch {
+        return;
+      }
+      if (!isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable)) return;
       const { data } = await this.supabase
         .from('candles')
         .select('ts')

@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const adapter = new OandaAdapter();
-  const alerts = new AlertsService(sb as never);
+  const alerts = new AlertsService(sb as never, adapter as never);
   const weeklyReport = new WeeklyReportService(sb as never, adapter, alerts);
   const state = new TradingStateService(sb as never);
   const cmd = new TelegramCommandService(sb as never, adapter, state, alerts, weeklyReport);

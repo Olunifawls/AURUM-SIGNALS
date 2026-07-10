@@ -16,3 +16,15 @@ export function isGoldMarketOpen(nowUtc: Date): boolean {
 
   return true;
 }
+
+/**
+ * Combined market gate used by BOTH the circuit breaker and the heartbeat so
+ * the two paths can never silently diverge.
+ *
+ * calendarOpen — result of isGoldMarketOpen(now)
+ * tradeable    — OANDA's live XAU_USD 'tradeable' flag (false during the
+ *                ~1h daily OANDA demo break, ~21:00–22:00 UTC weekdays)
+ */
+export function isMarketTradeableNow(calendarOpen: boolean, tradeable: boolean): boolean {
+  return calendarOpen && tradeable;
+}
