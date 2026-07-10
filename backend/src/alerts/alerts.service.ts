@@ -110,6 +110,8 @@ export class AlertsService {
   async heartbeatCheck(): Promise<void> {
     if (!this.supabase) return;
     try {
+      const now = new Date();
+      if (!isGoldMarketOpen(now)) return;
       const { data } = await this.supabase
         .from('candles')
         .select('ts')
@@ -123,8 +125,7 @@ export class AlertsService {
       const lastCloseTs = barOpenTs
         ? new Date(new Date(barOpenTs).getTime() + 15 * 60_000).toISOString()
         : null;
-      const now = new Date();
-      if (isFeedStale(lastCloseTs, now, isGoldMarketOpen(now))) {
+      if (isFeedStale(lastCloseTs, now, true)) {
         if (this.heartbeatThrottle.allow('heartbeat')) {
           await this.send(HEARTBEAT_MESSAGE);
         }

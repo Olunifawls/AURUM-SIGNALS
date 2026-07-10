@@ -149,12 +149,12 @@ export class CircuitBreakerService {
         evalDailyLoss({ dailyLossPct: dailyPct, maxDailyPct: cfg.maxDailyLossPct, now }),
         evalWeeklyLoss({ weeklyLossPct: weeklyPct, maxWeeklyPct: cfg.maxWeeklyLossPct, now }),
         evalConsecutiveSl(await this.recentCloseReasons()),
-        evalFeedStale(await this.lastFeedTs(), now, isGoldMarketOpen(now)),
+        evalFeedStale(await this.lastFeedTs(), now, isGoldMarketOpen(now) && pricing.tradeable),
       ];
       for (const spec of specs) if (spec) await this.applySpec(spec);
 
       // Feed recovered -> auto-clear the stale halt.
-      if (!evalFeedStale(await this.lastFeedTs(), now, isGoldMarketOpen(now))) {
+      if (!evalFeedStale(await this.lastFeedTs(), now, isGoldMarketOpen(now) && pricing.tradeable)) {
         await this.state.clearHalt('FEED_STALE');
       }
 
@@ -202,6 +202,10 @@ export class CircuitBreakerService {
       }
     } catch (err) {
       this.logger.error(scrubString(`runBreakers failed: ${String(err)}`));
+      // If OANDA is unreachable during market closure, still clear any FEED_STALE halt.
+      if (!isGoldMarketOpen(now)) {
+        await this.state.clearHalt('FEED_STALE').catch(() => undefined);
+      }
     }
   }
 

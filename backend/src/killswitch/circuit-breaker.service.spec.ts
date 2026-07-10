@@ -49,10 +49,10 @@ function makeState(overrides: Partial<{
   } as any;
 }
 
-function makeBroker(spreadOverride = 0.35) {
+function makeBroker(spreadOverride = 0.35, tradeable = true) {
   return {
     getAccount: jest.fn(async () => ({ equity: 10_000, currency: 'GBP', balance: 10_000, unrealizedPl: 0, marginUsed: 0, openTradeCount: 0, lastTransactionId: '1' })),
-    getPricing: jest.fn(async () => ({ instrument: 'XAU/USD', bid: 4124.0, ask: 4124.0 + spreadOverride, spread: spreadOverride, tradeable: true })),
+    getPricing: jest.fn(async () => ({ instrument: 'XAU/USD', bid: 4124.0, ask: 4124.0 + spreadOverride, spread: spreadOverride, tradeable })),
     getOpenTrades: jest.fn(async () => []),
   } as any;
 }
@@ -383,6 +383,26 @@ describe('FEED_STALE — staleness from bar close time', () => {
       'FEED_STALE',
       expect.objectContaining({ scope: 'NEW_ORDERS', requiresManual: false }),
     );
+  });
+
+  it('does NOT fire FEED_STALE when market is CLOSED (weekend), regardless of bar age', async () => {
+    // Saturday 12:00 UTC — isGoldMarketOpen returns false
+    const SAT_NOW = new Date('2026-07-11T12:00:00Z');
+    const state = makeState();
+    // Bar is extremely stale (36+ min since bar open → 21+ min since bar close)
+    const svc = new CircuitBreakerService(baseSupabase(STALE_TS), makeBroker(), state, alerts);
+    await svc.runBreakers(SAT_NOW);
+    const calls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'FEED_STALE');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does NOT fire FEED_STALE when OANDA marks instrument non-tradeable (daily maintenance break)', async () => {
+    // Weekday but instrument temporarily non-tradeable (e.g. ~22:00 UTC daily break)
+    const state = makeState();
+    const svc = new CircuitBreakerService(baseSupabase(STALE_TS), makeBroker(0.35, false), state, alerts);
+    await svc.runBreakers(NOW);
+    const calls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'FEED_STALE');
+    expect(calls).toHaveLength(0);
   });
 });
 
