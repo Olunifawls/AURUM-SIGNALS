@@ -47,8 +47,10 @@ describe('resolution/close alert respects the SAME experimental gate as new-sign
 // Wednesday 12:00 UTC — market open, tradeable
 const NOW = new Date('2026-07-09T12:00:00Z');
 
-// bar opened 36 min ago → barClose = 36m ago + 15m = 21 min ago → STALE (>20 min)
-const STALE_TS = new Date(NOW.getTime() - 36 * 60_000).toISOString();
+// bar opened 56 min ago → barClose = 56m ago + 15m = 41 min ago → STALE (>35 min threshold)
+const STALE_TS = new Date(NOW.getTime() - 56 * 60_000).toISOString();
+// bar opened 40 min ago → barClose = 40m ago + 15m = 25 min ago → single late bar, NOT stale (<35 min)
+const LATE_BAR_TS = new Date(NOW.getTime() - 40 * 60_000).toISOString();
 // bar opened 14 min ago → barClose = 14m ago + 15m = 1 min in future → NOT stale
 const FRESH_TS = new Date(NOW.getTime() - 14 * 60_000).toISOString();
 
@@ -73,7 +75,7 @@ function makeBroker(tradeable = true) {
 describe('AlertsService.heartbeatCheck — shared market-tradeable gate', () => {
   afterEach(() => { jest.restoreAllMocks(); });
 
-  it('sends DATA FEED DOWN when market open, tradeable, and bar closed >20 min ago', async () => {
+  it('sends DATA FEED DOWN when market open, tradeable, and bar closed >35 min ago', async () => {
     const svc = new AlertsService(makeSupabase(STALE_TS), makeBroker(true));
     const sendSpy = jest.spyOn(svc, 'send').mockResolvedValue(true);
     await svc.heartbeatCheck(NOW);
@@ -97,7 +99,14 @@ describe('AlertsService.heartbeatCheck — shared market-tradeable gate', () => 
     expect(broker.getPricing).not.toHaveBeenCalled(); // fast exit — no OANDA call on weekends
   });
 
-  it('does NOT send when feed is fresh (<20 min since bar close)', async () => {
+  it('does NOT send for single late bar (~25 min since barClose, below 35 min threshold)', async () => {
+    const svc = new AlertsService(makeSupabase(LATE_BAR_TS), makeBroker(true));
+    const sendSpy = jest.spyOn(svc, 'send').mockResolvedValue(true);
+    await svc.heartbeatCheck(NOW);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT send when feed is fresh (<35 min since bar close)', async () => {
     const svc = new AlertsService(makeSupabase(FRESH_TS), makeBroker(true));
     const sendSpy = jest.spyOn(svc, 'send').mockResolvedValue(true);
     await svc.heartbeatCheck(NOW);

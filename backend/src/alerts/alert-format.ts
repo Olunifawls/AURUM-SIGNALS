@@ -143,8 +143,13 @@ export function formatAdminError(source: string, message: string): string {
   return `🔴 ADMIN ALERT — ERROR in ${source}\n${message}`;
 }
 
-export const HEARTBEAT_MESSAGE = '⚠️ DATA FEED DOWN — no successful ingestion in over 20 minutes.';
-export const HEARTBEAT_THRESHOLD_MIN = 20;
+export const HEARTBEAT_MESSAGE = '⚠️ DATA FEED DOWN — no successful ingestion in over 35 minutes.';
+// 35 min = 2 × 15-min bars + 5 min OANDA-latency margin. A single bar stored
+// 5 min late (normal OANDA behaviour) creates at most a 20-min close gap, well
+// below this threshold. Only a genuine 2-bar-plus miss (>35 min) fires.
+// The circuit breaker uses a separate FEED_STALE_MIN = 20 (halting orders is
+// intentionally more conservative).
+export const HEARTBEAT_THRESHOLD_MIN = 35;
 
 /** True when the data feed is stale (market open + no ingestion within threshold). */
 export function isFeedStale(

@@ -10,6 +10,7 @@ import {
   AlertResolution,
   AlertSignal,
   HEARTBEAT_MESSAGE,
+  HEARTBEAT_THRESHOLD_MIN,
   SAMPLE_ALERT_SIGNAL,
   formatAdminError,
   formatNewSignal,
@@ -138,7 +139,7 @@ export class AlertsService {
       const lastCloseTs = barOpenTs
         ? new Date(new Date(barOpenTs).getTime() + 15 * 60_000).toISOString()
         : null;
-      if (isFeedStale(lastCloseTs, now, true)) {
+      if (isFeedStale(lastCloseTs, now, true, HEARTBEAT_THRESHOLD_MIN)) {
         if (this.heartbeatThrottle.allow('heartbeat')) {
           await this.send(HEARTBEAT_MESSAGE);
         }

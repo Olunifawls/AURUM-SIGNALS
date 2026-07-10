@@ -101,9 +101,13 @@ describe('(e) EXCLUSION — experimental 15min gated by ALERT_15MIN', () => {
 
 describe('(g) HEARTBEAT — feed stale detection', () => {
   const now = new Date('2024-01-03T12:00:00Z'); // Wednesday
-  it('is stale when market is open and no ingestion within 20 min', () => {
-    const old = new Date(now.getTime() - 21 * 60_000).toISOString();
+  it('is stale when market is open and no ingestion within 35 min (default threshold)', () => {
+    const old = new Date(now.getTime() - 36 * 60_000).toISOString();
     expect(isFeedStale(old, now, true)).toBe(true);
+  });
+  it('is NOT stale for a single late bar (~21 min) — below the 35 min default threshold', () => {
+    const latish = new Date(now.getTime() - 21 * 60_000).toISOString();
+    expect(isFeedStale(latish, now, true)).toBe(false);
   });
   it('is NOT stale when ingestion is recent', () => {
     const recent = new Date(now.getTime() - 5 * 60_000).toISOString();
