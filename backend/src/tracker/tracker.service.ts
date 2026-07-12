@@ -6,6 +6,7 @@ import { AlertsService } from '../alerts/alerts.service';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { Candle15, Direction, resolveSignal } from './resolution';
 import { computePerformanceDaily, RollupInput, SignalStatus } from './performance';
+import { computePathMetrics } from '../backtest/path-metrics';
 
 const EVENT_SOURCE = 'tracker';
 
@@ -66,6 +67,8 @@ export class TrackerService {
 
       await this.applyResolution(sig.id, res);
       resolutions.push({ id: sig.id, status: res.status, rMultiple: res.rMultiple });
+      // Non-blocking analytics — never affects trading flow.
+      this.storePathMetrics(sig, res.resolvedTs, candles).catch(() => undefined);
       await this.events.info(
         EVENT_SOURCE,
         `resolved signal ${sig.id} -> ${res.status} (${res.rMultiple.toFixed(2)}R)`,
@@ -148,6 +151,42 @@ export class TrackerService {
       })
       .eq('id', id);
     if (error) throw new Error(`signal resolution update failed: ${error.message}`);
+  }
+
+  /** Store MFE/MAE and R-crossing timestamps for a resolved signal. Research analytics only. */
+  private async storePathMetrics(
+    sig: OpenSignalRow,
+    resolvedTs: string,
+    allCandles: Candle15[],
+  ): Promise<void> {
+    if (!this.supabase) return;
+    const pathCandles = allCandles.filter((c) => c.ts <= resolvedTs);
+    const pm = computePathMetrics(
+      sig.direction,
+      Number(sig.entry_price),
+      Number(sig.stop_loss),
+      pathCandles,
+    );
+    await this.supabase.from('signal_path_metrics').upsert(
+      {
+        signal_id: sig.id,
+        direction: sig.direction,
+        entry_price: sig.entry_price,
+        initial_sl: sig.stop_loss,
+        take_profit: sig.take_profit,
+        mfe_r: pm.mfe_r,
+        mae_r: pm.mae_r,
+        cross_0_5r_ts: pm.cross_0_5r_ts,
+        cross_1r_ts: pm.cross_1r_ts,
+        cross_1_5r_ts: pm.cross_1_5r_ts,
+        cross_2r_ts: pm.cross_2r_ts,
+        retraced_from_1r: pm.retraced_from_1r,
+        retraced_from_1_5r: pm.retraced_from_1_5r,
+        candles_in_path: pm.candles_in_path,
+        computed_at: new Date().toISOString(),
+      },
+      { onConflict: 'signal_id' },
+    );
   }
 
   /** Recompute the full performance_daily table (delete-all + insert; it is derived). */
