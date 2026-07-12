@@ -99,7 +99,8 @@ export class ReconciliationService implements OnModuleInit {
         const trade = await this.broker.getTrade(tradeId);
         if (trade.state === 'CLOSED') {
           const closePrice = trade.closePrice ?? Number(pos.entry_price);
-          const rr = realizedR(Number(pos.entry_price), Number(pos.stop_loss), closePrice, pos.side);
+          const initialSL = Number(pos.initial_stop_loss ?? pos.stop_loss);
+          const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
           const reason = inferCloseReason(closePrice, Number(pos.stop_loss), Number(pos.take_profit));
           await this.supabase
             .from('positions')

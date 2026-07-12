@@ -132,6 +132,7 @@ export class ExecutionService {
         units: sizing.units,
         entry_price: fill,
         stop_loss: sizing.stopLoss,
+        initial_stop_loss: sizing.stopLoss,
         take_profit: sizing.takeProfit,
         status: 'OPEN',
         opened_at: now,
@@ -169,7 +170,8 @@ export class ExecutionService {
           /* best-effort */
         }
       }
-      const rr = realizedR(Number(pos.entry_price), Number(pos.stop_loss), closePrice, pos.side);
+      const initialSL = Number(pos.initial_stop_loss ?? pos.stop_loss);
+      const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
       await this.supabase
         .from('positions')
         .update({ status: 'CLOSED', close_reason: 'TIME_STOP', closed_at: now.toISOString(), close_price: closePrice, realized_r: rr, updated_at: now.toISOString() })

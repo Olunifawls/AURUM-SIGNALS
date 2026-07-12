@@ -3,6 +3,14 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 
+export interface PurgeTestArtifactsResult {
+  positions: number;
+  orders: number;
+  riskEvents: number;
+  haltsCleared: number;
+  performanceDaily: number;
+}
+
 export interface LedgerResetResult {
   flattenedTrades: number;
   openTradesAfter: number;
@@ -37,6 +45,81 @@ export class AdminResetService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
   ) {}
+
+  /**
+   * Surgical purge of test artifacts. Removes the synthetic test position
+   * (entry ≈ 4100 / broker trade 78) and its linked order, ALL risk_events
+   * (there are zero real trades so every event is synthetic), all active
+   * system_halts set during breaker verification, and performance_daily
+   * (derived; tracker rebuilds it clean from real signals).
+   * Equity snapshots and signals are NEVER touched.
+   */
+  async purgeTestArtifacts(): Promise<PurgeTestArtifactsResult> {
+    if (!this.supabase) throw new Error('Supabase not configured');
+    const ts = new Date().toISOString();
+
+    // 1. Find test positions (entry_price near 4100 or broker_trade_id = '78').
+    const { data: testPos } = await this.supabase
+      .from('positions')
+      .select('id,order_id')
+      .or('broker_trade_id.eq.78,and(entry_price.gte.4099,entry_price.lte.4101)')
+      .eq('mode', 'demo');
+    const posIds = (testPos ?? []).map((p: { id: string }) => p.id);
+    const orderIds = (testPos ?? [])
+      .map((p: { order_id: string | null }) => p.order_id)
+      .filter((id): id is string => !!id);
+
+    // 2. Delete test positions.
+    let positions = 0;
+    if (posIds.length > 0) {
+      const { error } = await this.supabase.from('positions').delete().in('id', posIds);
+      if (error) throw new Error(`positions purge failed: ${error.message}`);
+      positions = posIds.length;
+    }
+
+    // 3. Delete linked orders.
+    let orders = 0;
+    if (orderIds.length > 0) {
+      const { error } = await this.supabase.from('orders').delete().in('id', orderIds);
+      if (error) throw new Error(`orders purge failed: ${error.message}`);
+      orders = orderIds.length;
+    }
+
+    // 4. Delete ALL risk_events (zero real trades → every row is synthetic).
+    const { error: reErr } = await this.supabase.from('risk_events').delete().gt('id', 0);
+    if (reErr) throw new Error(`risk_events purge failed: ${reErr.message}`);
+    const { count: riskEvents } = await this.supabase
+      .from('risk_events')
+      .select('*', { count: 'exact', head: true });
+
+    // 5. Soft-clear all active system_halts.
+    const { data: activeHalts } = await this.supabase
+      .from('system_halts')
+      .select('id')
+      .eq('active', true);
+    const haltsCleared = activeHalts?.length ?? 0;
+    if (haltsCleared > 0) {
+      await this.supabase
+        .from('system_halts')
+        .update({ active: false, cleared_at: ts, updated_at: ts })
+        .eq('active', true);
+    }
+
+    // 6. Delete performance_daily (derived; tracker rebuilds from real signals).
+    const { error: perfErr } = await this.supabase
+      .from('performance_daily')
+      .delete()
+      .gte('day', '2000-01-01');
+    if (perfErr) throw new Error(`performance_daily purge failed: ${perfErr.message}`);
+    const { count: performanceDaily } = await this.supabase
+      .from('performance_daily')
+      .select('*', { count: 'exact', head: true });
+
+    this.logger.log(
+      `purge-test-artifacts: positions=${positions} orders=${orders} riskEvents deleted haltsCleared=${haltsCleared}`,
+    );
+    return { positions, orders, riskEvents: riskEvents ?? 0, haltsCleared, performanceDaily: performanceDaily ?? 0 };
+  }
 
   async ledgerReset(): Promise<LedgerResetResult> {
     if (!this.supabase) throw new Error('Supabase not configured');

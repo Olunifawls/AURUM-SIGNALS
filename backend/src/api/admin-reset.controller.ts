@@ -24,6 +24,26 @@ export class AdminResetController {
     private readonly risk: RiskManagerService,
   ) {}
 
+  /**
+   * POST /api/admin/purge-test-artifacts — surgical removal of synthetic test data.
+   * Removes the test position (entry ≈ 4100 / broker trade 78), all risk_events,
+   * and active system_halts. Equity snapshots and signals are untouched.
+   * Triple-gated (token + TRADING_MODE + confirm).
+   */
+  @Post('purge-test-artifacts')
+  @HttpCode(200)
+  async purgeTestArtifacts(@Body() body: { confirm?: string }) {
+    if ((process.env.TRADING_MODE ?? '').trim().toLowerCase() === 'live') {
+      return { ok: false, error: 'REFUSED: TRADING_MODE=live. DEMO-only endpoint.' };
+    }
+    if (body?.confirm !== 'PURGE_TEST_ARTIFACTS_DEMO') {
+      return { ok: false, error: 'Send body { "confirm": "PURGE_TEST_ARTIFACTS_DEMO" } to proceed.' };
+    }
+    this.logger.warn('purge-test-artifacts triggered via admin endpoint (DEMO)');
+    const result = await this.svc.purgeTestArtifacts();
+    return { ok: true, ...result };
+  }
+
   @Post('ledger-reset')
   @HttpCode(200)
   async ledgerReset(@Body() body: { confirm?: string }) {
