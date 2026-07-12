@@ -8,7 +8,7 @@
  * Run with: npm run exit-research
  */
 import { WebSocket as WsWebSocket } from 'ws';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { loadRepoEnv } from '../load-env';
 import { computePathMetrics, PathMetrics } from './path-metrics';
 import { simulateExit, ExitRuleId, ExitSimResult } from './exit-rules';
@@ -43,7 +43,7 @@ interface ResolvedSignal {
   status: string;
 }
 
-async function fetchResolvedSignals(supabase: ReturnType<typeof createClient>): Promise<ResolvedSignal[]> {
+async function fetchResolvedSignals(supabase: SupabaseClient): Promise<ResolvedSignal[]> {
   const { data, error } = await supabase
     .from('signals')
     .select('id,direction,entry_price,stop_loss,take_profit,created_at,resolved_at,status')
@@ -64,7 +64,7 @@ async function fetchResolvedSignals(supabase: ReturnType<typeof createClient>): 
 }
 
 async function fetchCandles(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   afterTs: string,
   upToTs: string,
 ): Promise<Candle15[]> {
