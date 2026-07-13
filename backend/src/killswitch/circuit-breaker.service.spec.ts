@@ -305,6 +305,53 @@ describe('(c) SESSION GAP wiring — evalSessionGap called with real inputs', ()
     const sgCalls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'SESSION_GAP');
     expect(sgCalls).toHaveLength(0);
   });
+
+  it('SESSION_GAP fires INSIDE the reopen grace window — it is never suppressed (weekly gap protection)', async () => {
+    // Sunday 22:06 UTC: market just reopened — grace window is active.
+    // Fresh service (no primeSession) so lastTradeable=false → reopen detected on this call.
+    const REOPEN_NOW = new Date('2026-07-13T22:06:00Z');
+    // Daily candle that just opened at Sunday 22:00 UTC (6 min ago — well within 24h guard).
+    const SUNDAY_OPEN_TS = new Date(REOPEN_NOW.getTime() - 6 * 60_000).toISOString();
+    // Previous daily close (Friday session end, ~48h ago).
+    const FRIDAY_CLOSE_TS = new Date(REOPEN_NOW.getTime() - 49 * 3600_000).toISOString();
+    // Last 15min bar is also from Friday (~49h ago) — FEED_STALE would fire without grace.
+    const STALE_15M_TS = new Date(REOPEN_NOW.getTime() - 49 * 3600_000).toISOString();
+
+    const state = makeState();
+    const broker = makeBroker(); // tradeable=true (market just opened)
+    const sb = makeSupabase({
+      equity_snapshots: [{ equity: 10_000, high_water_mark: 10_000 }],
+      candles: [
+        // 15min: stale bar (49h old) — FEED_STALE would fire without grace
+        { timeframe: '15min', ts: STALE_15M_TS, open: 4057, high: 4059, low: 4055, close: 4057 },
+        // 1day: Sunday open 4200, Friday close 4050 → gap = 150 > 1.5×80 = 120 → SESSION_GAP fires
+        { timeframe: '1day', ts: SUNDAY_OPEN_TS, open: 4200, close: 4210 },
+        { timeframe: '1day', ts: FRIDAY_CLOSE_TS, open: 4030, close: 4050 },
+      ],
+      indicator_snapshots: [
+        { timeframe: '15min', atr_14: 5.2 },
+        { timeframe: '1h',    atr_14: 14.8 },
+        { timeframe: '1day',  atr_14: 80.0 }, // gap 150 > 1.5×80 = 120
+      ],
+      positions: [],
+    });
+
+    // Fresh service — no primeSession, so the grace fires on this first call.
+    const svc = new CircuitBreakerService(sb, broker, state, alerts);
+    await svc.runBreakers(REOPEN_NOW);
+
+    // SESSION_GAP must fire — reopen is precisely when genuine gaps occur.
+    expect(state.setHalt).toHaveBeenCalledWith(
+      'SESSION_GAP',
+      expect.objectContaining({ scope: 'NEW_ORDERS', requiresManual: false }),
+    );
+    // FEED_STALE must NOT fire — suppressed by grace (49h gap is the structural reopen artifact).
+    const feedStaleCalls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'FEED_STALE');
+    expect(feedStaleCalls).toHaveLength(0);
+    // VOLATILITY_COOLDOWN must NOT fire — suppressed by grace (weekend price gap in priceMove15m).
+    const vcCalls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'VOLATILITY_COOLDOWN');
+    expect(vcCalls).toHaveLength(0);
+  });
 });
 
 // ─── testFireBreaker (admin test-fire path) ──────────────────────────────────
