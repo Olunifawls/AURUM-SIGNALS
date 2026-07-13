@@ -5,6 +5,7 @@ import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { isGoldMarketOpen, isMarketTradeableNow } from '../ingestion/market-hours';
+import { isInReopenGrace } from '../killswitch/breakers';
 import { Throttle, ADMIN_THROTTLE_MS } from './throttle';
 import {
   AlertResolution,
@@ -31,6 +32,10 @@ export class AlertsService {
   private readonly logger = new Logger('Alerts');
   private readonly adminThrottle = new Throttle(ADMIN_THROTTLE_MS);
   private readonly heartbeatThrottle = new Throttle(ADMIN_THROTTLE_MS);
+
+  /** Track false→true transition to suppress reopen-edge-case heartbeat false alarms. */
+  private lastTradeable = false;
+  private marketReopenTs: number | null = null;
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
@@ -125,7 +130,13 @@ export class AlertsService {
       } catch {
         return;
       }
-      if (!isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable)) return;
+      // Track false→true transition; suppress heartbeat during post-reopen grace window.
+      const tradeable = isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable);
+      if (!this.lastTradeable && tradeable) this.marketReopenTs = now.getTime();
+      this.lastTradeable = tradeable;
+      if (!tradeable) return;
+      if (isInReopenGrace(this.marketReopenTs, now)) return;
+
       const { data } = await this.supabase
         .from('candles')
         .select('ts')

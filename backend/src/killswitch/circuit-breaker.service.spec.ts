@@ -9,6 +9,15 @@ const OLD_ENV = { ...process.env };
 beforeAll(() => { process.env.OANDA_ACCOUNT_ID_DEMO = 'test-001'; });
 afterAll(() => { process.env = OLD_ENV; });
 
+/**
+ * Simulate a mid-session service (lastTradeable=true, no recent reopen).
+ * Tests that represent normal mid-day behaviour must call this to prevent the
+ * reopen-grace window from suppressing evaluations on the very first call.
+ */
+function primeSession(svc: CircuitBreakerService): void {
+  (svc as any).lastTradeable = true; // already live; don't record a "reopen"
+}
+
 /** Supabase mock with per-table overrides. Falls back to empty data. */
 function makeSupabase(tableData: Record<string, any[]> = {}) {
   return {
@@ -81,6 +90,7 @@ describe('(b) VOLATILITY COOLDOWN wiring — evalVolatility called with real inp
     });
 
     const svc = new CircuitBreakerService(sb, broker, state, alerts);
+    primeSession(svc); // mid-session: no reopen grace in effect
     await svc.runBreakers(NOW);
 
     expect(state.setHalt).toHaveBeenCalledWith(
@@ -137,6 +147,7 @@ describe('(b) VOLATILITY COOLDOWN wiring — evalVolatility called with real inp
     });
 
     const svc = new CircuitBreakerService(sb, broker, state, alerts);
+    primeSession(svc); // mid-session: no reopen grace in effect
     // Pre-seed spread history so the average is representative (0.35).
     for (let i = 0; i < 10; i++) (svc as any).spreadHistory.push(0.35);
     await svc.runBreakers(NOW);
@@ -378,6 +389,7 @@ describe('FEED_STALE — staleness from bar close time', () => {
   it('fires FEED_STALE when no bar has closed in >20 min (genuine missed bars)', async () => {
     const state = makeState();
     const svc = new CircuitBreakerService(baseSupabase(STALE_TS), makeBroker(), state, alerts);
+    primeSession(svc); // mid-session: no reopen grace in effect
     await svc.runBreakers(NOW);
     expect(state.setHalt).toHaveBeenCalledWith(
       'FEED_STALE',

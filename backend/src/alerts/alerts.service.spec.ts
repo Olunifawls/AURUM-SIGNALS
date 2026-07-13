@@ -72,11 +72,17 @@ function makeBroker(tradeable = true) {
   } as any;
 }
 
+/** Simulate a mid-session service (lastTradeable=true, no recent reopen). */
+function primeSession(svc: AlertsService): void {
+  (svc as any).lastTradeable = true;
+}
+
 describe('AlertsService.heartbeatCheck — shared market-tradeable gate', () => {
   afterEach(() => { jest.restoreAllMocks(); });
 
   it('sends DATA FEED DOWN when market open, tradeable, and bar closed >35 min ago', async () => {
     const svc = new AlertsService(makeSupabase(STALE_TS), makeBroker(true));
+    primeSession(svc); // mid-session: no reopen grace in effect
     const sendSpy = jest.spyOn(svc, 'send').mockResolvedValue(true);
     await svc.heartbeatCheck(NOW);
     expect(sendSpy).toHaveBeenCalledWith(expect.stringContaining('DATA FEED DOWN'));

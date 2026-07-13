@@ -10,6 +10,7 @@ import { SYMBOL } from '../ingestion/ingestion.constants';
 import { isGoldMarketOpen, isMarketTradeableNow } from '../ingestion/market-hours';
 import {
   HaltSpec,
+  REOPEN_GRACE_MS,
   evalBrokerErrors,
   evalConsecutiveSl,
   evalDailyLoss,
@@ -18,6 +19,7 @@ import {
   evalSessionGap,
   evalVolatility,
   evalWeeklyLoss,
+  isInReopenGrace,
 } from './breakers';
 import { scrubString } from './scrub';
 
@@ -39,6 +41,10 @@ import { scrubString } from './scrub';
 export class CircuitBreakerService {
   private readonly logger = new Logger('CircuitBreaker');
   private brokerErrorTimes: number[] = [];
+
+  /** Track false→true transition to suppress reopen-edge-case false alarms. */
+  private lastTradeable = false;
+  private marketReopenTs: number | null = null;
 
   /** Rolling 24h spread observations (~480 samples at 3min cadence). Reseeds on restart. */
   private readonly spreadHistory: number[] = [];
@@ -129,6 +135,13 @@ export class CircuitBreakerService {
         this.broker.getPricing(SYMBOL),
       ]);
 
+      // Track false→true tradeable transition; record reopen timestamp for grace window.
+      const tradeable = isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable);
+      if (!this.lastTradeable && tradeable) this.marketReopenTs = now.getTime();
+      this.lastTradeable = tradeable;
+      const graceUntil = this.marketReopenTs !== null ? this.marketReopenTs + REOPEN_GRACE_MS : null;
+      const feedTs = await this.lastFeedTs();
+
       const { daily, weekly, hwm } = await this.equityBaselines(now);
       const dailyPct = daily ? ((daily - account.equity) / daily) * 100 : 0;
       const weeklyPct = weekly ? ((weekly - account.equity) / weekly) * 100 : 0;
@@ -149,18 +162,20 @@ export class CircuitBreakerService {
         evalDailyLoss({ dailyLossPct: dailyPct, maxDailyPct: cfg.maxDailyLossPct, now }),
         evalWeeklyLoss({ weeklyLossPct: weeklyPct, maxWeeklyPct: cfg.maxWeeklyLossPct, now }),
         evalConsecutiveSl(await this.recentCloseReasons()),
-        evalFeedStale(await this.lastFeedTs(), now, isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable)),
+        evalFeedStale(feedTs, now, tradeable, graceUntil),
       ];
       for (const spec of specs) if (spec) await this.applySpec(spec);
 
-      // Feed recovered -> auto-clear the stale halt.
-      if (!evalFeedStale(await this.lastFeedTs(), now, isMarketTradeableNow(isGoldMarketOpen(now), pricing.tradeable))) {
+      // Feed recovered (or in grace window) -> auto-clear any stale halt.
+      if (!evalFeedStale(feedTs, now, tradeable, graceUntil)) {
         await this.state.clearHalt('FEED_STALE');
       }
 
       // === VOLATILITY COOLDOWN — newly wired (INC-4 follow-up) ===
       // Guard: skip if already in cooldown (don't extend the 2h timer on subsequent cycles).
-      if (!alreadyCooling) {
+      // Guard: skip during reopen grace — priceMove15m spans the weekend gap and would
+      //        fire spuriously on every weekly open. Genuine session volatility fires normally.
+      if (!alreadyCooling && !isInReopenGrace(this.marketReopenTs, now)) {
         const [c15, atr15, atr1h] = await Promise.all([
           this.latestCandle('15min'),
           this.latestIndicatorAtr('15min'),

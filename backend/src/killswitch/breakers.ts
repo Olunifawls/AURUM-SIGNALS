@@ -11,6 +11,17 @@ export interface HaltSpec {
 
 export const FEED_STALE_MIN = 20;
 
+/** 45-min window after weekly/daily reopen during which FEED_STALE and the
+ *  gap-based VOLATILITY_COOLDOWN check are suppressed. Gives ingestion time to
+ *  store the first bar of the new session before staleness checks fire. */
+export const REOPEN_GRACE_MS = 45 * 60_000;
+
+/** True when now falls within the reopen grace window. */
+export function isInReopenGrace(marketReopenTs: number | null, now: Date): boolean {
+  if (marketReopenTs === null) return false;
+  return now.getTime() - marketReopenTs < REOPEN_GRACE_MS;
+}
+
 /** §6 volatility cooldown: 15m range > 3×ATR14, OR 15m move > 2×hourly ATR, OR
  * spread > 2.5× its 24h average -> 2h cooldown (check 4a flag). */
 export function evalVolatility(i: {
@@ -76,8 +87,15 @@ export function evalConsecutiveSl(reasons: string[], threshold = 4): HaltSpec | 
   return null;
 }
 
-/** §6 data feed stale > 20 min -> no new orders; auto-clear on recovery. */
-export function evalFeedStale(lastTs: string | null, now: Date, marketOpen: boolean): HaltSpec | null {
+/** §6 data feed stale > 20 min -> no new orders; auto-clear on recovery.
+ *  Pass reopenGraceUntil (epoch ms) to suppress during post-reopen grace window. */
+export function evalFeedStale(
+  lastTs: string | null,
+  now: Date,
+  marketOpen: boolean,
+  reopenGraceUntil: number | null = null,
+): HaltSpec | null {
+  if (reopenGraceUntil !== null && now.getTime() < reopenGraceUntil) return null;
   if (isFeedStale(lastTs, now, marketOpen, FEED_STALE_MIN)) {
     return { type: 'FEED_STALE', scope: 'NEW_ORDERS', reason: 'data feed stale > 20 min', requiresManual: false };
   }
