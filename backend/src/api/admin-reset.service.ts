@@ -21,14 +21,11 @@ export interface LedgerResetResult {
   ts: string;
 }
 
-// Impossible UUID — matches no real row but satisfies the "must have a filter" rule.
-const NEVER_UUID = '00000000-0000-0000-0000-000000000000';
-
 /**
  * FIX-2 one-shot admin operation:
  *   1. Close ALL open OANDA demo trades (flatten) and verify flat.
- *   2. Wipe the contaminated trading ledger via direct Supabase REST deletes.
- *      The service_role key bypasses RLS — no stored procedure required.
+ *   2. Archive then wipe the contaminated trading ledger, atomically, via
+ *      archive_and_wipe_ledger (migration 0010). Rows move to ledger_archive.
  *      Clean-data tables (candles, fx_rates, indicator_snapshots, broker_accounts,
  *      user_settings) are NEVER touched.
  *   3. Soft-clear all active system_halts rows.
@@ -47,15 +44,16 @@ export class AdminResetService {
   ) {}
 
   /**
-   * Surgical purge of test artifacts. Removes the synthetic test position
+   * Surgical purge of test artifacts. Moves the synthetic test position
    * (entry ≈ 4100 / broker trade 78) and its linked order, ALL risk_events
-   * (there are zero real trades so every event is synthetic), all active
-   * system_halts set during breaker verification, and performance_daily
-   * (derived; tracker rebuilds it clean from real signals).
+   * (there are zero real trades so every event is synthetic) and performance_daily
+   * (derived; tracker rebuilds it clean from real signals) to ledger_archive,
+   * and clears all active system_halts set during breaker verification.
    * Equity snapshots and signals are NEVER touched.
    */
   async purgeTestArtifacts(): Promise<PurgeTestArtifactsResult> {
     if (!this.supabase) throw new Error('Supabase not configured');
+    await this.assertArchiveReady();
     const ts = new Date().toISOString();
 
     // 1. Find test positions (entry_price near 4100 or broker_trade_id = '78').
@@ -69,30 +67,21 @@ export class AdminResetService {
       .map((p: { order_id: string | null }) => p.order_id)
       .filter((id): id is string => !!id);
 
-    // 2. Delete test positions.
-    let positions = 0;
-    if (posIds.length > 0) {
-      const { error } = await this.supabase.from('positions').delete().in('id', posIds);
-      if (error) throw new Error(`positions purge failed: ${error.message}`);
-      positions = posIds.length;
-    }
-
-    // 3. Delete linked orders.
-    let orders = 0;
-    if (orderIds.length > 0) {
-      const { error } = await this.supabase.from('orders').delete().in('id', orderIds);
-      if (error) throw new Error(`orders purge failed: ${error.message}`);
-      orders = orderIds.length;
-    }
-
-    // 4. Delete ALL risk_events (zero real trades → every row is synthetic).
-    const { error: reErr } = await this.supabase.from('risk_events').delete().gt('id', 0);
-    if (reErr) throw new Error(`risk_events purge failed: ${reErr.message}`);
+    // 2. Archive and remove test positions, linked orders, ALL risk_events and
+    //    performance_daily in one transaction.
+    const { data: purged, error: purgeErr } = await this.supabase.rpc('archive_test_artifacts', {
+      p_reason: 'purge-test-artifacts',
+      p_position_ids: posIds,
+      p_order_ids: orderIds,
+    });
+    if (purgeErr) throw new Error(`Archive failed: ${purgeErr.message}`);
+    const positions = Number(purged?.positions ?? 0);
+    const orders = Number(purged?.orders ?? 0);
     const { count: riskEvents } = await this.supabase
       .from('risk_events')
       .select('*', { count: 'exact', head: true });
 
-    // 5. Soft-clear all active system_halts.
+    // 3. Soft-clear all active system_halts.
     const { data: activeHalts } = await this.supabase
       .from('system_halts')
       .select('id')
@@ -105,12 +94,6 @@ export class AdminResetService {
         .eq('active', true);
     }
 
-    // 6. Delete performance_daily (derived; tracker rebuilds from real signals).
-    const { error: perfErr } = await this.supabase
-      .from('performance_daily')
-      .delete()
-      .gte('day', '2000-01-01');
-    if (perfErr) throw new Error(`performance_daily purge failed: ${perfErr.message}`);
     const { count: performanceDaily } = await this.supabase
       .from('performance_daily')
       .select('*', { count: 'exact', head: true });
@@ -123,6 +106,7 @@ export class AdminResetService {
 
   async ledgerReset(): Promise<LedgerResetResult> {
     if (!this.supabase) throw new Error('Supabase not configured');
+    await this.assertArchiveReady(); // before any trade is closed at the broker
     const ts = new Date().toISOString();
 
     // Step 1: Close all open trades at OANDA.
@@ -148,15 +132,11 @@ export class AdminResetService {
       );
     }
 
-    // Step 3: Wipe ledger tables. Delete in FK-safe order (leaf first).
-    // Count each table first so the summary shows what was removed.
-    const wipedCounts: Record<string, number> = {};
-    await this.wipeTable('risk_events',       wipedCounts, async () => { const { error } = await this.supabase!.from('risk_events').delete().gt('id', 0);               if (error) throw error; });
-    await this.wipeTable('equity_snapshots',  wipedCounts, async () => { const { error } = await this.supabase!.from('equity_snapshots').delete().gt('id', 0);          if (error) throw error; });
-    await this.wipeTable('positions',         wipedCounts, async () => { const { error } = await this.supabase!.from('positions').delete().neq('id', NEVER_UUID);        if (error) throw error; });
-    await this.wipeTable('orders',            wipedCounts, async () => { const { error } = await this.supabase!.from('orders').delete().neq('id', NEVER_UUID);           if (error) throw error; });
-    await this.wipeTable('signals',           wipedCounts, async () => { const { error } = await this.supabase!.from('signals').delete().neq('id', NEVER_UUID);          if (error) throw error; });
-    await this.wipeTable('performance_daily', wipedCounts, async () => { const { error } = await this.supabase!.from('performance_daily').delete().gte('day', '2000-01-01'); if (error) throw error; });
+    // Step 3: Archive then wipe the ledger tables in one transaction.
+    const { data: archived, error: archiveErr } = await this.supabase.rpc('archive_and_wipe_ledger', { p_reason: 'ledger-reset' });
+    if (archiveErr) throw new Error(`Archive failed: ${archiveErr.message}`);
+    const { batch_id: batchId, ...wipedCounts } = archived as Record<string, number> & { batch_id?: string };
+    this.logger.log(`FIX-2 archived ledger as batch ${batchId}: ${JSON.stringify(wipedCounts)}`);
 
     // Step 4: Soft-clear all active system_halts.
     const { data: haltRows } = await this.supabase
@@ -217,19 +197,9 @@ export class AdminResetService {
     };
   }
 
-  /** Count rows in a table, run the delete, record the pre-wipe count. */
-  private async wipeTable(
-    table: string,
-    counts: Record<string, number>,
-    deleteFn: () => Promise<void>,
-  ): Promise<void> {
-    const { count } = await this.supabase!.from(table).select('*', { count: 'exact', head: true });
-    try {
-      await deleteFn();
-    } catch (err: any) {
-      throw new Error(`Failed to wipe ${table}: ${err?.message ?? String(err)}`);
-    }
-    counts[table] = count ?? 0;
-    this.logger.log(`FIX-2 wiped ${counts[table]} rows from ${table}`);
+  /** Refuse early if migration 0010 is missing, so nothing is destroyed or closed. */
+  private async assertArchiveReady(): Promise<void> {
+    const { error } = await this.supabase!.from('ledger_archive').select('id', { count: 'exact', head: true });
+    if (error) throw new Error(`Ledger archive unavailable (apply migration 0010_ledger_archive): ${error.message}`);
   }
 }
