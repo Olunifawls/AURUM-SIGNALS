@@ -23,6 +23,10 @@ export const COT_USABLE_AFTER_MS = 3 * DAY_MS + 21 * HOUR_MS;
 
 export const EVENT_RISK_HOURS = 72;
 export const NEWS_EXIT_LEAD_MIN = 15;
+/** SHADOW logs what closing at T-15 would have made and never closes. Set this to
+ * HARD, as a new ruleset version, to close positions again. */
+export type NewsExitMode = 'SHADOW' | 'HARD';
+export const NEWS_EXIT_MODE = 'SHADOW' as NewsExitMode;
 export const DOLLAR_SHOCK_RANGE_BARS = 20;
 
 /** Daily data starts here; the backfill reads from this date. */

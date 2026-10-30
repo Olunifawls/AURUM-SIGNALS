@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
-import { RULESET_VERSION } from '../v1.constants';
+import { NEWS_EXIT_MODE, RULESET_VERSION } from '../v1.constants';
 import { LedgerRow, NewsExitRow, summarise, WatchRow } from './forward-test';
 
 const PAGE = 1000;
@@ -53,7 +53,10 @@ export class ForwardTestService {
       };
     });
 
-    const stopOf = (p: any): number => Number(p.initial_stop_loss ?? p.stop_loss);
+    const stopOf = (p: any): number | null => {
+      const stop = p.initial_stop_loss ?? p.stop_loss;
+      return stop == null ? null : Number(stop);
+    };
     const exits: NewsExitRow[] = positions
       .filter((p) => p.close_reason === 'NEWS_EXIT')
       .map((p) => {
@@ -64,7 +67,7 @@ export class ForwardTestService {
           closedAt: p.closed_at,
           side: p.side,
           entry: Number(p.entry_price),
-          initialStop: stopOf(p),
+          initialStop: stopOf(p) as number, // set by the same path that wrote the exit
           realizedR: p.realized_r == null ? null : Number(p.realized_r),
           signalResolvedPrice: price == null ? null : Number(price),
         };
@@ -100,6 +103,6 @@ export class ForwardTestService {
         aiSummary: e.ai_summary ?? null,
       }));
 
-    return { ruleset: RULESET_VERSION, ...summarise(ledger, exits, watchRows), recent };
+    return { ruleset: RULESET_VERSION, newsExitMode: NEWS_EXIT_MODE, ...summarise(ledger, exits, watchRows), recent };
   }
 }

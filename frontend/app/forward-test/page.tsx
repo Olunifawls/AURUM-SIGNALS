@@ -108,18 +108,23 @@ export default function ForwardTestPage() {
           </section>
 
           <section>
-            <Heading>News exits</Heading>
+            <Heading>News exit ({report.newsExitMode === 'SHADOW' ? 'shadow' : 'hard'})</Heading>
+            <p className="mb-2 text-xs text-neutral-500">
+              {report.newsExitMode === 'SHADOW'
+                ? 'What closing 15 minutes before each tier-1 release would have made, against holding. Logged, never acted on.'
+                : 'Positions closed 15 minutes before each tier-1 release, against holding.'}
+            </p>
             <div className="grid gap-3 sm:grid-cols-3">
-              <Stat label="Exits settled" value={String(report.newsExits.settled)} />
-              <Stat label="R at exit" value={fmtSignedR(report.newsExits.exitR)} className={rColor(report.newsExits.exitR)} />
-              <Stat label="R if held" value={fmtSignedR(report.newsExits.holdR)} className={rColor(report.newsExits.holdR)} />
+              <Stat label="Settled" value={String(report.newsExits.settled)} />
+              <Stat label="R closing at T-15" value={fmtSignedR(report.newsExits.exitR)} className={rColor(report.newsExits.exitR)} />
+              <Stat label="R holding" value={fmtSignedR(report.newsExits.holdR)} className={rColor(report.newsExits.holdR)} />
             </div>
             {report.newsExits.trades.length > 0 && (
               <div className="mt-3 overflow-x-auto rounded-lg border border-neutral-800">
                 <table className="w-full text-left text-sm">
                   <thead className="text-xs uppercase text-neutral-500">
                     <tr>
-                      {['Event', 'Closed', 'R at exit', 'R if held'].map((h) => (
+                      {['Event', 'When', 'R closing at T-15', 'R holding'].map((h) => (
                         <th key={h} className="px-3 py-1.5 font-medium">
                           {h}
                         </th>
@@ -128,11 +133,11 @@ export default function ForwardTestPage() {
                   </thead>
                   <tbody>
                     {report.newsExits.trades.map((t) => (
-                      <tr key={t.positionId}>
+                      <tr key={`${t.positionId}-${t.event}-${t.at}`}>
                         <td className="px-3 py-1.5">{t.event ?? '—'}</td>
-                        <td className="px-3 py-1.5 text-neutral-400">{t.closedAt ? relTime(t.closedAt) : '—'}</td>
+                        <td className="px-3 py-1.5 text-neutral-400">{t.at ? relTime(t.at) : '—'}</td>
                         <td className={`px-3 py-1.5 tabular-nums ${rColor(t.exitR)}`}>{fmtSignedR(t.exitR)}</td>
-                        <td className={`px-3 py-1.5 tabular-nums ${rColor(t.holdR)}`}>{t.holdR == null ? 'signal still open' : fmtSignedR(t.holdR)}</td>
+                        <td className={`px-3 py-1.5 tabular-nums ${rColor(t.holdR)}`}>{t.holdR == null ? 'still open' : fmtSignedR(t.holdR)}</td>
                       </tr>
                     ))}
                   </tbody>

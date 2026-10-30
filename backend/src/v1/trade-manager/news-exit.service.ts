@@ -7,15 +7,22 @@ import { AlertsService } from '../../alerts/alerts.service';
 import { realizedR } from '../../execution/exec-util';
 import { level2Config } from '../../level2/level2.config';
 import { EconomicEvent, effectiveSchedule } from '../calendar/economic-calendar';
+import { NEWS_EXIT_MODE, NewsExitMode } from '../v1.constants';
 import { dueTier1Event } from './news-exit';
 
 export const NEWS_EXIT = 'NEWS_EXIT';
+const XAU = 'XAU_USD';
 
-/** HARD exit: closes every open L2 position 15 minutes before a tier-1 release. */
+/**
+ * News exit around tier-1 releases, in the mode the ruleset sets. SHADOW records the
+ * price each open L2 position would have closed at and never closes it. HARD closes
+ * every open L2 position from 15 minutes before the release.
+ */
 @Injectable()
 export class NewsExitService {
   private readonly logger = new Logger('NewsExit');
   private readonly schedule = effectiveSchedule().events;
+  protected readonly mode: NewsExitMode = NEWS_EXIT_MODE;
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
@@ -23,8 +30,8 @@ export class NewsExitService {
     private readonly alerts: AlertsService,
   ) {}
 
-  /** Each tick re-reads OPEN positions, so one that failed to close is retried. Second
-   * 20: T-15 always lands on a reconcile minute, and reconcile must not race the close. */
+  /** Each tick re-reads OPEN positions, so one that failed is retried. Second 20: T-15
+   * always lands on a reconcile minute, and reconcile must not race a close. */
   @Cron('20 * * * * *')
   async tick(now: Date = new Date()): Promise<number> {
     if (!this.supabase || !process.env.OANDA_ACCOUNT_ID_DEMO) return 0;
@@ -36,15 +43,39 @@ export class NewsExitService {
       await this.alertFailure(event, `could not read open positions: ${error.message}`);
       return 0;
     }
-    let closed = 0;
+    let handled = 0;
     for (const pos of data ?? []) {
       try {
-        if (await this.closePosition(pos, event, now)) closed++;
+        if (await (this.mode === 'HARD' ? this.closePosition(pos, event, now) : this.recordShadow(pos, event))) handled++;
       } catch (err) {
         await this.alertFailure(event, `position ${pos.id}: ${String(err)}`);
       }
     }
-    return closed;
+    return handled;
+  }
+
+  /** The price this position would close at now. The unique key keeps the first row,
+   * so later ticks in the window cannot replace the T-15 price. */
+  private async recordShadow(pos: Record<string, any>, event: EconomicEvent): Promise<boolean> {
+    const quote = await this.broker.getPricing(XAU);
+    const price = pos.side === 'BUY' ? quote.bid : quote.ask;
+    if (!(price > 0)) throw new Error('no usable quote');
+    const { error } = await this.supabase!.from('trade_watch_events').upsert(
+      {
+        kind: 'NEWS_EXIT_SHADOW',
+        position_id: pos.id,
+        signal_id: pos.signal_id ?? null,
+        agent: event.name,
+        verdict: null,
+        flipped: false,
+        bar_ts: event.at,
+        price,
+        detail: { event: event.name, releaseAt: event.at },
+      },
+      { onConflict: 'position_id,kind,agent,bar_ts', ignoreDuplicates: true },
+    );
+    if (error) throw new Error(`trade_watch_events insert failed: ${error.message}`);
+    return true;
   }
 
   private async closePosition(pos: Record<string, any>, event: EconomicEvent, now: Date): Promise<boolean> {
@@ -89,6 +120,6 @@ export class NewsExitService {
 
   private async alertFailure(event: EconomicEvent, detail: string): Promise<void> {
     this.logger.error(`${event.name}: ${detail}`);
-    await this.alerts.sendAdminError(`news-exit-${event.name}`, `news exit failed: ${detail}`).catch(() => undefined);
+    await this.alerts.sendAdminError(`news-exit-${event.name}`, `news exit ${this.mode} failed: ${detail}`).catch(() => undefined);
   }
 }

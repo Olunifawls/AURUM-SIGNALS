@@ -206,11 +206,12 @@ export interface ForwardTestWatch {
 
 export interface ForwardTestReport {
   ruleset: string;
+  newsExitMode: 'SHADOW' | 'HARD';
   kept: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
   vetoed: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
   byVerdict: Array<ForwardTestGroup & { agent: string; verdict: string }>;
   newsExits: {
-    trades: Array<{ positionId: string; event: string | null; closedAt: string | null; exitR: number | null; holdR: number | null }>;
+    trades: Array<{ positionId: string | null; event: string | null; at: string | null; exitR: number | null; holdR: number | null }>;
     settled: number;
     exitR: number;
     holdR: number;

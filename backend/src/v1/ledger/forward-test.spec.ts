@@ -62,6 +62,17 @@ describe('summarise', () => {
     expect(r.newsExits).toMatchObject({ settled: 1, exitR: 0.5, holdR: 2 });
   });
 
+  it('compares closing at T-15 with holding for shadow news exits, one row per release', () => {
+    const w = (over: Partial<WatchRow>): WatchRow => ({ kind: 'NEWS_EXIT_SHADOW', positionId: 'p', agent: 'CPI', flipped: false, barTs: '2026-11-10T13:30:00.000Z', price: 2005, side: 'BUY', entry: 2000, initialStop: 1990, finalR: 2, ...over });
+    const r = summarise([], [], [w({}), w({ agent: 'FOMC', barTs: '2026-12-09T19:00:00.000Z', price: 1995 }), w({ positionId: 'q', finalR: null })]);
+    expect(r.newsExits.trades).toHaveLength(3);
+    expect(r.newsExits.trades[0]).toMatchObject({ event: 'CPI', exitR: 0.5, holdR: 2 });
+    expect(r.newsExits.trades[2].holdR).toBeNull();
+    expect(r.newsExits).toMatchObject({ settled: 2, exitR: 0, holdR: 4 });
+    expect(r.thesisWatch.events).toEqual([]);
+    expect(r.dollarShock.events).toEqual([]);
+  });
+
   it('shows R at each shadow event against what the trade made, counting only flips', () => {
     const w = (over: Partial<WatchRow>): WatchRow => ({ kind: 'THESIS_CHECK', positionId: 'p', agent: 'regime', flipped: true, barTs: 'b', price: 2005, side: 'BUY', entry: 2000, initialStop: 1990, finalR: -1, ...over });
     const r = summarise([], [], [w({}), w({ flipped: false }), w({ kind: 'DOLLAR_SHOCK', flipped: false, price: 1995, finalR: 2 }), w({ finalR: null })]);
@@ -95,9 +106,20 @@ describe('ForwardTestService', () => {
   it('derives the signal R, keeps a vetoed signal in the ledger, and links the news exit', async () => {
     const r = await new ForwardTestService(client).report();
     expect(r.vetoed).toMatchObject({ signals: 1, resolved: 1, totalR: 2 });
+    expect(r.newsExitMode).toBe('SHADOW');
     expect(r.kept.signals).toBe(0);
     expect(r.newsExits.trades[0]).toMatchObject({ event: 'NFP', exitR: 0.5, holdR: 2 });
     expect(r.recent[0]).toMatchObject({ signalId: 'sig-1', eligible: false });
+  });
+
+  it('leaves R blank for a position with no recorded stop', async () => {
+    const rows: Record<string, any[]> = {
+      signal_evaluations: [],
+      positions: [{ id: 'pos-9', side: 'BUY', entry_price: 2000, stop_loss: null, initial_stop_loss: null, status: 'OPEN' }],
+      trade_watch_events: [{ kind: 'NEWS_EXIT_SHADOW', position_id: 'pos-9', agent: 'CPI', flipped: false, bar_ts: 'b', price: 2005 }],
+    };
+    const db = { from: (t: string) => { const b: any = { select: () => b, eq: () => b, order: () => b, range: async () => ({ data: rows[t], error: null }) }; return b; } } as any;
+    expect((await new ForwardTestService(db).report()).newsExits.trades[0].exitR).toBeNull();
   });
 
   it('pages past the 1000-row cap', async () => {

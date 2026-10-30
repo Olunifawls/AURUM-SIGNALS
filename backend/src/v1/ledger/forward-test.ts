@@ -22,7 +22,7 @@ export interface NewsExitRow {
 }
 
 export interface WatchRow {
-  kind: 'THESIS_CHECK' | 'DOLLAR_SHOCK';
+  kind: 'THESIS_CHECK' | 'DOLLAR_SHOCK' | 'NEWS_EXIT_SHADOW';
   positionId: string | null;
   agent: string;
   flipped: boolean;
@@ -78,14 +78,17 @@ function byVerdict(rows: LedgerRow[]) {
 
 /** What holding would have made: the signal's own L1 exit price, measured from this
  * trade's real fill and original stop. Null until the signal resolves. */
-function newsExits(rows: NewsExitRow[]) {
-  const trades = rows.map((r) => ({
+function newsExits(rows: NewsExitRow[], shadow: WatchRow[]) {
+  const hard = rows.map((r) => ({
     positionId: r.positionId,
     event: r.event,
-    closedAt: r.closedAt,
+    at: r.closedAt,
     exitR: r.realizedR,
     holdR: r.signalResolvedPrice == null ? null : realizedR(r.entry, r.initialStop, r.signalResolvedPrice, r.side),
   }));
+  // SHADOW: the T-15 price against what the trade really made. Null until it closes.
+  const logged = watchResults(shadow).events.map((e) => ({ positionId: e.positionId, event: e.agent, at: e.barTs, exitR: e.rAtEvent, holdR: e.finalR }));
+  const trades = [...hard, ...logged];
   const settled = trades.filter((t) => t.exitR != null && t.holdR != null);
   return {
     trades,
@@ -121,7 +124,7 @@ export function summarise(ledger: LedgerRow[], exits: NewsExitRow[], watch: Watc
     kept: { ...group(kept), curve: curve(kept) },
     vetoed: { ...group(vetoed), curve: curve(vetoed) },
     byVerdict: byVerdict(ledger),
-    newsExits: newsExits(exits),
+    newsExits: newsExits(exits, watch.filter((w) => w.kind === 'NEWS_EXIT_SHADOW')),
     thesisWatch: watchResults(watch.filter((w) => w.kind === 'THESIS_CHECK' && w.flipped)),
     dollarShock: watchResults(watch.filter((w) => w.kind === 'DOLLAR_SHOCK')),
   };

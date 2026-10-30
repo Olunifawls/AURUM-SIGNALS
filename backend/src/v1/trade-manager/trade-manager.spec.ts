@@ -3,6 +3,7 @@ import { CandleRow } from '../../ingestion/oanda-candles.service';
 import { dollarShock } from './dollar-shock';
 import { dueTier1Event } from './news-exit';
 import { NewsExitService } from './news-exit.service';
+import { NEWS_EXIT_MODE, NewsExitMode } from '../v1.constants';
 import { ShadowWatchService } from './shadow-watch.service';
 
 const NFP: EconomicEvent = { name: 'NFP', tier: 1, at: '2026-11-06T13:30:00.000Z' };
@@ -79,7 +80,97 @@ const position = (over: any = {}) => ({
   ...over,
 });
 
-describe('NewsExitService', () => {
+class HardNewsExit extends NewsExitService {
+  protected override readonly mode: NewsExitMode = 'HARD';
+}
+
+describe('NewsExitService in SHADOW mode (ruleset v1)', () => {
+  const OLD = { ...process.env };
+  const T15 = new Date('2026-11-06T13:15:00Z');
+  beforeEach(() => {
+    process.env.OANDA_ACCOUNT_ID_DEMO = 'acct';
+  });
+  afterEach(() => (process.env = { ...OLD }));
+
+  const quote = { instrument: 'XAU_USD', bid: 2005, ask: 2005.4, spread: 0.4, tradeable: true };
+
+  /** A positions read plus a trade_watch_events write, honouring the unique key. */
+  function makeShadowDb(positions: any[]) {
+    const rows: any[] = [];
+    const client = {
+      from: (table: string) => ({
+        select: () => ({ eq: async () => ({ data: positions, error: null }) }),
+        upsert: async (row: any, opts: any) => {
+          if (table !== 'trade_watch_events') throw new Error(`unexpected write to ${table}`);
+          expect(opts).toEqual({ onConflict: 'position_id,kind,agent,bar_ts', ignoreDuplicates: true });
+          if (!rows.some((r) => r.position_id === row.position_id && r.agent === row.agent && r.bar_ts === row.bar_ts)) rows.push(row);
+          return { error: null };
+        },
+        update: () => { throw new Error('shadow must not update positions'); },
+        insert: () => { throw new Error('shadow must not insert risk events'); },
+      }),
+    } as any;
+    return { client, rows };
+  }
+  const broker = (over: any = {}) => makeBroker({ getPricing: jest.fn(async () => quote), ...over });
+
+  it('is the mode ruleset v1 ships with', () => {
+    expect(NEWS_EXIT_MODE).toBe('SHADOW');
+  });
+
+  it('logs every open position at T-15 and never closes one', async () => {
+    const db = makeShadowDb([position(), position({ id: 'pos-2', broker_trade_id: 'T2', side: 'SELL' })]);
+    const b = broker();
+    const n = await new NewsExitService(db.client, b, makeAlerts()).tick(T15);
+
+    expect(n).toBe(2);
+    expect(b.closeTrade).not.toHaveBeenCalled();
+    expect(b.getTrade).not.toHaveBeenCalled();
+    expect(db.rows[0]).toMatchObject({ kind: 'NEWS_EXIT_SHADOW', position_id: 'pos-1', signal_id: 'sig-1', agent: 'NFP', bar_ts: NFP.at, price: 2005 });
+  });
+
+  it('prices a BUY at the bid and a SELL at the ask, as a close would fill', async () => {
+    const db = makeShadowDb([position(), position({ id: 'pos-2', side: 'SELL' })]);
+    await new NewsExitService(db.client, broker(), makeAlerts()).tick(T15);
+    expect(db.rows.map((r) => r.price)).toEqual([2005, 2005.4]);
+  });
+
+  it('keeps the T-15 price when later ticks in the window run', async () => {
+    const db = makeShadowDb([position()]);
+    const b = broker();
+    const svc = new NewsExitService(db.client, b, makeAlerts());
+    await svc.tick(T15);
+    b.getPricing.mockResolvedValue({ ...quote, bid: 1990 });
+    await svc.tick(new Date('2026-11-06T13:20:00Z'));
+    expect(db.rows).toHaveLength(1);
+    expect(db.rows[0].price).toBe(2005);
+  });
+
+  it('does nothing for PPI or outside the window', async () => {
+    const db = makeShadowDb([position()]);
+    const b = broker();
+    const svc = new NewsExitService(db.client, b, makeAlerts());
+    expect(await svc.tick(new Date('2026-11-13T13:15:00Z'))).toBe(0);
+    expect(await svc.tick(new Date('2026-11-06T13:14:00Z'))).toBe(0);
+    expect(db.rows).toEqual([]);
+  });
+
+  it('an empty quote alerts, logs nothing, and is retried by the next tick', async () => {
+    const db = makeShadowDb([position()]);
+    const alerts = makeAlerts();
+    const b = broker({ getPricing: jest.fn(async () => ({ ...quote, bid: 0, ask: 0 })) });
+    expect(await new NewsExitService(db.client, b, alerts).tick(T15)).toBe(0);
+    expect(db.rows).toEqual([]);
+    expect(alerts.sendAdminError).toHaveBeenCalled();
+  });
+
+  it('logs a position even without a broker trade id, as nothing is sent to the broker', async () => {
+    const db = makeShadowDb([position({ broker_trade_id: null })]);
+    expect(await new NewsExitService(db.client, broker(), makeAlerts()).tick(T15)).toBe(1);
+  });
+});
+
+describe('NewsExitService in HARD mode (switched on by the ruleset)', () => {
   const OLD = { ...process.env };
   const T15 = new Date('2026-11-06T13:15:00Z');
   beforeEach(() => {
@@ -90,7 +181,7 @@ describe('NewsExitService', () => {
   it('closes every open position at T-15 with reason NEWS_EXIT and the event name', async () => {
     const db = makeDb([position(), position({ id: 'pos-2', broker_trade_id: 'T2' })]);
     const broker = makeBroker();
-    const n = await new NewsExitService(db.client, broker, makeAlerts()).tick(T15);
+    const n = await new HardNewsExit(db.client, broker, makeAlerts()).tick(T15);
 
     expect(n).toBe(2);
     expect(broker.closeTrade.mock.calls.map((c: any[]) => c[0])).toEqual(['T1', 'T2']);
@@ -110,14 +201,14 @@ describe('NewsExitService', () => {
   it('touches nothing outside a tier-1 window', async () => {
     const db = makeDb([position()]);
     const broker = makeBroker();
-    expect(await new NewsExitService(db.client, broker, makeAlerts()).tick(new Date('2026-11-06T13:14:00Z'))).toBe(0);
+    expect(await new HardNewsExit(db.client, broker, makeAlerts()).tick(new Date('2026-11-06T13:14:00Z'))).toBe(0);
     expect(broker.closeTrade).not.toHaveBeenCalled();
   });
 
   it('does not close for PPI', async () => {
     const db = makeDb([position()]);
     const broker = makeBroker();
-    expect(await new NewsExitService(db.client, broker, makeAlerts()).tick(new Date('2026-11-13T13:15:00Z'))).toBe(0);
+    expect(await new HardNewsExit(db.client, broker, makeAlerts()).tick(new Date('2026-11-13T13:15:00Z'))).toBe(0);
     expect(broker.closeTrade).not.toHaveBeenCalled();
   });
 
@@ -130,7 +221,7 @@ describe('NewsExitService', () => {
       }),
     });
     const alerts = makeAlerts();
-    expect(await new NewsExitService(db.client, broker, alerts).tick(T15)).toBe(1);
+    expect(await new HardNewsExit(db.client, broker, alerts).tick(T15)).toBe(1);
     expect(db.updates.map((u) => u.id)).toEqual(['pos-2']);
     expect(alerts.sendAdminError).toHaveBeenCalled();
   });
@@ -138,7 +229,7 @@ describe('NewsExitService', () => {
   it('does not record a close the broker did not fill', async () => {
     const db = makeDb([position()]);
     const alerts = makeAlerts();
-    await new NewsExitService(db.client, makeBroker({ closeTrade: jest.fn(async () => ({ closed: false })) }), alerts).tick(T15);
+    await new HardNewsExit(db.client, makeBroker({ closeTrade: jest.fn(async () => ({ closed: false })) }), alerts).tick(T15);
     expect(db.updates).toEqual([]);
     expect(alerts.sendAdminError).toHaveBeenCalled();
   });
@@ -146,20 +237,20 @@ describe('NewsExitService', () => {
   it('alerts on a position with no broker trade id', async () => {
     const db = makeDb([position({ broker_trade_id: null })]);
     const alerts = makeAlerts();
-    await new NewsExitService(db.client, makeBroker(), alerts).tick(T15);
+    await new HardNewsExit(db.client, makeBroker(), alerts).tick(T15);
     expect(alerts.sendAdminError).toHaveBeenCalled();
   });
 
   it('alerts when open positions cannot be read', async () => {
     const alerts = makeAlerts();
-    await new NewsExitService(makeDb(null, { message: 'down' }).client, makeBroker(), alerts).tick(T15);
+    await new HardNewsExit(makeDb(null, { message: 'down' }).client, makeBroker(), alerts).tick(T15);
     expect(alerts.sendAdminError).toHaveBeenCalled();
   });
 
   it('does nothing without a configured demo account', async () => {
     delete process.env.OANDA_ACCOUNT_ID_DEMO;
     const broker = makeBroker();
-    await new NewsExitService(makeDb([position()]).client, broker, makeAlerts()).tick(T15);
+    await new HardNewsExit(makeDb([position()]).client, broker, makeAlerts()).tick(T15);
     expect(broker.closeTrade).not.toHaveBeenCalled();
   });
 });
