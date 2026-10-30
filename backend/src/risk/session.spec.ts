@@ -14,7 +14,7 @@ describe('session timing (check 3)', () => {
   });
 
   it('flags the last 2h before weekly close (Fri 20:00–22:00 UTC)', () => {
-    const fri = new Date('2026-07-10T21:00:00Z'); // Friday 21:00 UTC
+    const fri = new Date('2026-12-04T21:00:00Z'); // Friday 21:00 UTC (16:00 New York, EST)
     const f = sessionFlags(fri);
     expect(f.marketOpen).toBe(true);
     expect(f.inLastWindow).toBe(true);
