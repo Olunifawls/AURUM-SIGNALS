@@ -31,6 +31,7 @@ export interface Level2Config {
   maxTotalDrawdownPct: number;
   maxSpreadPoints: number;
   maxSlippagePoints: number;
+  entryDriftMaxR: number;
   newsBlackoutEnabled: boolean;
   autoTradeEnabled: boolean;
   breakevenStopEnabled: boolean;
@@ -56,6 +57,7 @@ export function level2Config(): Level2Config {
     maxTotalDrawdownPct: num(process.env.MAX_TOTAL_DRAWDOWN_PCT, 20),
     maxSpreadPoints: num(process.env.MAX_SPREAD_POINTS, 0.6),
     maxSlippagePoints: num(process.env.MAX_SLIPPAGE_POINTS, 0.5),
+    entryDriftMaxR: num(process.env.ENTRY_DRIFT_MAX_R, 0.1),
     newsBlackoutEnabled: bool(process.env.NEWS_BLACKOUT_ENABLED, true),
     autoTradeEnabled: bool(process.env.AUTO_TRADE_ENABLED, true),
     breakevenStopEnabled: bool(process.env.BREAKEVEN_STOP_ENABLED, false),

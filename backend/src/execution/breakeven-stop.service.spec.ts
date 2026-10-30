@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { BreakevenStopService } from './breakeven-stop.service';
 
 const SYMBOL = 'XAU/USD';
@@ -147,5 +148,26 @@ describe('BreakevenStopService', () => {
     expect(moved).toBe(0);
     expect(broker.modifyTradeSL).not.toHaveBeenCalled();
     process.env.BREAKEVEN_STOP_ENABLED = 'true';
+  });
+});
+
+describe('BREAKEVEN_STOP_ENABLED startup log', () => {
+  const startupLog = (value: string | undefined): string[] => {
+    if (value === undefined) delete process.env.BREAKEVEN_STOP_ENABLED;
+    else process.env.BREAKEVEN_STOP_ENABLED = value;
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    (makeService([]).svc as any).onModuleInit();
+    const lines = log.mock.calls.map(([m]) => String(m));
+    log.mockRestore();
+    process.env.BREAKEVEN_STOP_ENABLED = 'true';
+    return lines;
+  };
+
+  it('logs the effective value when set', () => {
+    expect(startupLog('true')).toContain('BREAKEVEN_STOP_ENABLED effective value: true');
+  });
+
+  it('logs false when the key is missing from the environment', () => {
+    expect(startupLog(undefined)).toContain('BREAKEVEN_STOP_ENABLED effective value: false');
   });
 });

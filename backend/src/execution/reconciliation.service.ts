@@ -101,12 +101,12 @@ export class ReconciliationService implements OnModuleInit {
           const closePrice = trade.closePrice ?? Number(pos.entry_price);
           const initialSL = Number(pos.initial_stop_loss ?? pos.stop_loss);
           const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
-          const reason = inferCloseReason(closePrice, Number(pos.stop_loss), Number(pos.take_profit));
+          const reason = inferCloseReason(closePrice, initialSL, Number(pos.take_profit), Number(pos.stop_loss));
           await this.supabase
             .from('positions')
             .update({
               status: 'CLOSED',
-              closed_at: now,
+              closed_at: trade.closeTime ?? now, // reconcile can run minutes after the close
               close_price: closePrice,
               realized_pl: trade.realizedPl,
               realized_pl_ccy: account.currency,

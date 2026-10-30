@@ -129,3 +129,15 @@ describe('AlertsService.heartbeatCheck — shared market-tradeable gate', () => 
     expect(sendSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('sendHaltAlert', () => {
+  it('sends every halt: a second halt inside the 30 min admin throttle is not dropped', async () => {
+    const a = new AlertsService(null as never, null as never);
+    const send = jest.spyOn(a, 'send').mockResolvedValue(true);
+    await a.sendHaltAlert('FEED_STALE', 'data feed stale > 20 min');
+    await a.sendHaltAlert('FEED_STALE', 'data feed stale > 20 min');
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0][0]).toContain('HALT FEED_STALE');
+    jest.restoreAllMocks();
+  });
+});

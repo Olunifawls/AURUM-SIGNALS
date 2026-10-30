@@ -81,6 +81,7 @@ export default function OverviewPage() {
             <span className="text-xs text-neutral-500">
               market {health.marketOpen ? 'open' : 'closed'}
               {health.stale && <span className="ml-1 text-red-400">· feed stale</span>}
+              <span className="ml-1">· breakeven stop {health.breakevenStopEnabled ? 'on' : 'off'}</span>
             </span>
           )}
         </div>

@@ -7,6 +7,23 @@ export function slippagePoints(fillPrice: number, requestedPrice: number): numbe
   return Math.abs(fillPrice - requestedPrice);
 }
 
+const TIMEFRAME_MS: Record<string, number> = { '1h': 3600_000, '4h': 4 * 3600_000 };
+
+/** True if a signal is older than one candle of its timeframe. An unknown age
+ * counts as stale: the safe default for a gate in front of a live order. */
+export function isSignalStale(createdAt: string | undefined, timeframe: string, now: Date): boolean {
+  const candleMs = TIMEFRAME_MS[timeframe];
+  const created = Date.parse(createdAt ?? '');
+  if (!candleMs || !Number.isFinite(created)) return true;
+  return now.getTime() - created > candleMs;
+}
+
+/** How much worse than the signal's entry this side would pay. Negative when the
+ * price is better than the entry. */
+export function adverseDrift(side: Side, entry: number, bid: number, ask: number): number {
+  return side === 'BUY' ? ask - entry : entry - bid;
+}
+
 /** Achieved RR from the actual fill: |tp - fill| / |fill - stop|. */
 export function achievedRr(fillPrice: number, stopLoss: number, takeProfit: number): number | null {
   const risk = Math.abs(fillPrice - stopLoss);
@@ -22,12 +39,22 @@ export function realizedR(entry: number, stopLoss: number, closePrice: number, s
   return Math.round((move / risk) * 100) / 100;
 }
 
-/** Infer why a broker-closed trade closed, from the close price vs SL/TP. */
-export function inferCloseReason(closePrice: number, stopLoss: number, takeProfit: number): string {
-  const span = Math.abs(takeProfit - stopLoss);
+/**
+ * Infer why a broker-closed trade closed, from the close price vs SL/TP. SL_HIT
+ * always means the ORIGINAL stop: pass the stop at entry as `initialStop`, and the
+ * stop in force at close as `currentStop` if it was moved (breakeven).
+ */
+export function inferCloseReason(
+  closePrice: number,
+  initialStop: number,
+  takeProfit: number,
+  currentStop: number = initialStop,
+): string {
+  const span = Math.abs(takeProfit - initialStop);
   const tol = Math.max(span * 0.02, 0.5); // 2% of the SL–TP span, min 0.5
   if (Math.abs(closePrice - takeProfit) <= tol) return 'TP_HIT';
-  if (Math.abs(closePrice - stopLoss) <= tol) return 'SL_HIT';
+  if (currentStop !== initialStop && Math.abs(closePrice - currentStop) <= tol) return 'BREAKEVEN_STOP';
+  if (Math.abs(closePrice - initialStop) <= tol) return 'SL_HIT';
   return 'CLOSED_AT_BROKER';
 }
 

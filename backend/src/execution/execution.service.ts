@@ -8,7 +8,7 @@ import { RiskManagerService } from '../risk/risk-manager.service';
 import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { ExecutionReadinessService } from './readiness.service';
-import { achievedRr, actualRiskPctAtFill, isTimeStopped, realizedR, slippagePoints } from './exec-util';
+import { achievedRr, actualRiskPctAtFill, adverseDrift, isSignalStale, isTimeStopped, realizedR, slippagePoints } from './exec-util';
 
 export interface SignalForExec {
   id: string;
@@ -19,6 +19,7 @@ export interface SignalForExec {
   take_profit: number | string;
   track: 'core' | 'experimental';
   status?: string;
+  created_at: string;
 }
 
 export interface ExecutionOutcome {
@@ -31,6 +32,7 @@ export interface ExecutionOutcome {
 }
 
 const CORE_TIMEFRAMES = new Set(['1h', '4h']);
+const OANDA_INSTR = 'XAU_USD';
 
 /**
  * Execution (Phase C). Consumes NEW CORE-track signals only (1h/4h; NEVER the
@@ -59,6 +61,13 @@ export class ExecutionService {
     // Startup-reconcile gate (D7/B6): no order until the first reconcile completes.
     if (!this.readiness.isReady()) return { executed: false, reason: 'reconcile_pending' };
 
+    // A signal left without an order (market closed, halted, risk rejected) stays
+    // OPEN and is re-polled every 2 min, so it must not be traded once it has aged out.
+    if (isSignalStale(sig.created_at, sig.timeframe, new Date())) {
+      await this.logRejectionOnce('SIGNAL_STALE', sig, `signal ${sig.id} (${sig.timeframe}) created ${sig.created_at} is older than one candle; not traded`, { createdAt: sig.created_at, timeframe: sig.timeframe });
+      return { executed: false, reason: 'signal_stale' };
+    }
+
     const intent = {
       signalId: sig.id,
       side: sig.direction,
@@ -72,6 +81,22 @@ export class ExecutionService {
       return { executed: false, reason: decision.reason };
     }
     const s = decision.sizing;
+
+    // Last gate before ordering: last to run, so it only logs for an otherwise-approved order.
+    // One-sided: only a worse price is limited, by ENTRY_DRIFT_MAX_R × 1R. The adapter
+    // reports an empty quote as bid=ask=0, which must not read as a better price.
+    const entry = Number(sig.entry_price);
+    const maxDrift = level2Config().entryDriftMaxR * Math.abs(entry - Number(sig.stop_loss));
+    const pricing = await this.broker.getPricing(OANDA_INSTR);
+    if (pricing.bid <= 0 || pricing.ask <= 0) {
+      await this.logRejectionOnce('ENTRY_QUOTE_UNAVAILABLE', sig, 'no usable quote before ordering; not traded', { entry, bid: pricing.bid, ask: pricing.ask });
+      return { executed: false, reason: 'quote_unavailable' };
+    }
+    const drift = adverseDrift(sig.direction, entry, pricing.bid, pricing.ask);
+    if (drift > maxDrift) {
+      await this.logRejectionOnce('ENTRY_DRIFT_EXCEEDED', sig, `price ${drift.toFixed(4)} worse than signal entry > ${maxDrift.toFixed(4)}; not traded`, { entry, bid: pricing.bid, ask: pricing.ask, drift, maxDrift });
+      return { executed: false, reason: 'entry_drift' };
+    }
 
     const brokerAccountId = await this.brokerAccountId();
     const outcome = await this.placement.placeForSignal({
@@ -160,12 +185,14 @@ export class ExecutionService {
       if (!pos.opened_at || !isTimeStopped(pos.opened_at, now)) continue;
       const tradeId = pos.broker_trade_id as string | null;
       let closePrice = Number(pos.entry_price);
+      let closedAt = now.toISOString();
       if (tradeId) {
         const res = await this.broker.closeTrade(tradeId); // execution MAY close (time stop)
         void res;
         try {
           const t = await this.broker.getTrade(tradeId);
           closePrice = t.closePrice ?? closePrice;
+          closedAt = t.closeTime ?? closedAt;
         } catch {
           /* best-effort */
         }
@@ -174,7 +201,7 @@ export class ExecutionService {
       const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
       await this.supabase
         .from('positions')
-        .update({ status: 'CLOSED', close_reason: 'TIME_STOP', closed_at: now.toISOString(), close_price: closePrice, realized_r: rr, updated_at: now.toISOString() })
+        .update({ status: 'CLOSED', close_reason: 'TIME_STOP', closed_at: closedAt, close_price: closePrice, realized_r: rr, updated_at: now.toISOString() })
         .eq('id', pos.id);
       closed++;
       this.logger.log(`time-stop closed position ${pos.id}`);
@@ -188,7 +215,7 @@ export class ExecutionService {
     if (!this.supabase || !this.readiness.isReady() || !level2Config().autoTradeEnabled) return;
     const { data: sigs } = await this.supabase
       .from('signals')
-      .select('id,timeframe,direction,entry_price,stop_loss,take_profit,track,status')
+      .select('id,timeframe,direction,entry_price,stop_loss,take_profit,track,status,created_at')
       .eq('symbol', SYMBOL)
       .eq('status', 'OPEN')
       .eq('track', 'core')
@@ -212,6 +239,14 @@ export class ExecutionService {
       .eq('mode', 'demo')
       .limit(1);
     return data?.[0]?.id ?? null;
+  }
+
+  /** Log a pre-order rejection once per signal, however many polls re-evaluate it. */
+  private async logRejectionOnce(eventType: string, sig: SignalForExec, message: string, meta: Record<string, unknown>): Promise<void> {
+    if (!this.supabase) return;
+    const { data } = await this.supabase.from('risk_events').select('id').eq('signal_id', sig.id).eq('event_type', eventType).limit(1);
+    if (data?.length) return;
+    await this.supabase.from('risk_events').insert({ mode: 'demo', event_type: eventType, severity: 'WARN', signal_id: sig.id, message, meta });
   }
 
   private async logRisk(eventType: string, message: string, meta: Record<string, unknown>): Promise<void> {

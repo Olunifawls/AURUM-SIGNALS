@@ -220,6 +220,7 @@ export class OandaAdapter implements IBrokerAdapter {
       units: Math.abs(units),
       price: Number(t.price ?? 0),
       closePrice: t.averageClosePrice != null ? Number(t.averageClosePrice) : null,
+      closeTime: Number.isFinite(Date.parse(t.closeTime)) ? new Date(t.closeTime).toISOString() : null,
       realizedPl: Number(t.realizedPL ?? 0),
       clientTag: t.clientExtensions?.id,
       raw: json,

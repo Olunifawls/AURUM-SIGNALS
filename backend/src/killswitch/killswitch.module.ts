@@ -4,6 +4,7 @@ import { BrokerModule } from '../broker/broker.module';
 import { AlertsModule } from '../alerts/alerts.module';
 import { RiskModule } from '../risk/risk.module';
 import { CircuitBreakerService } from './circuit-breaker.service';
+import { DailyStatusService } from './daily-status.service';
 import { TelegramCommandService } from './telegram-command.service';
 import { WeeklyReportService } from '../alerts/weekly-report.service';
 
@@ -14,7 +15,7 @@ import { WeeklyReportService } from '../alerts/weekly-report.service';
  */
 @Module({
   imports: [SupabaseModule, BrokerModule, AlertsModule, RiskModule],
-  providers: [CircuitBreakerService, TelegramCommandService, WeeklyReportService],
+  providers: [CircuitBreakerService, DailyStatusService, TelegramCommandService, WeeklyReportService],
   exports: [CircuitBreakerService],
 })
 export class KillSwitchModule {}

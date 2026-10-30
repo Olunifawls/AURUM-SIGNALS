@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { IngestionModule } from '../ingestion/ingestion.module';
 import { BrokerModule } from '../broker/broker.module';
+import { AlertsModule } from '../alerts/alerts.module';
 import { RiskModule } from '../risk/risk.module';
 import { KillSwitchModule } from '../killswitch/killswitch.module';
 import { ReadController } from './read.controller';
@@ -22,7 +23,7 @@ import { AdminResetService } from './admin-reset.service';
  * test-breaker endpoint (DEMO-only, admin-token gated).
  */
 @Module({
-  imports: [SupabaseModule, IngestionModule, BrokerModule, RiskModule, KillSwitchModule],
+  imports: [SupabaseModule, IngestionModule, BrokerModule, AlertsModule, RiskModule, KillSwitchModule],
   controllers: [ReadController, ExecutionReadController, AdminResetController],
   providers: [ReadService, HealthService, ExecutionReadService, AdminResetService],
 })

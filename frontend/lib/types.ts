@@ -98,6 +98,7 @@ export interface HealthResponse {
   timeframes: Record<string, { lastIngestionTs: string | null }>;
   fx: { lastTs: string | null };
   sources: Record<string, { consecutiveErrors: number; circuitOpen: boolean }>;
+  breakevenStopEnabled: boolean;
 }
 
 export interface TierStatus {

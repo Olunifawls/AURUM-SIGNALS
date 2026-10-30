@@ -41,6 +41,7 @@ export interface BrokerTradeState {
   units: number;
   price: number; // entry
   closePrice: number | null;
+  closeTime?: string | null; // ISO, set by the broker from the closing transaction
   realizedPl: number; // account ccy
   clientTag?: string;
   raw?: unknown;
