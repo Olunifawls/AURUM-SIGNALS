@@ -80,4 +80,13 @@ describe('OandaCandlesService (FIX-1 candle source)', () => {
     expect(fx.rate).toBeCloseTo(1.3416, 4);
     expect((fetchMock.mock.calls[0][0] as string)).toContain('/v3/instruments/GBP_USD/candles');
   });
+
+  it('fetchInstrument uses the gold settings for any instrument, with an optional from', async () => {
+    fetchMock.mockResolvedValue(res([bar('2026-01-01T00:00:00.000000000Z', 100), bar('2026-01-02T00:00:00.000000000Z', 101, false)]));
+    const rows = await svc.fetchInstrument('EUR_USD', 'D', { count: 500, from: '2025-06-01T00:00:00Z' });
+    expect(rows.map((r) => r.close)).toEqual([100]);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain('/instruments/EUR_USD/candles');
+    expect(url).toContain('price=M&granularity=D&count=500&alignmentTimezone=UTC&dailyAlignment=0&from=2025-06-01T00:00:00Z');
+  });
 });

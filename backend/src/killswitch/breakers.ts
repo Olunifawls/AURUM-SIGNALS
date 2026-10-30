@@ -1,5 +1,7 @@
 import { HaltType } from '../risk/trading-state.service';
 import { isFeedStale } from '../alerts/alert-format';
+import { NEW_YORK, zonedParts, zonedTimeToUtc } from '../common/timezone';
+import { WEEK_EDGE_HOUR_NY } from '../ingestion/market-hours';
 
 export interface HaltSpec {
   type: HaltType;
@@ -137,11 +139,9 @@ export function nextUkMidnight(now: Date): Date {
 }
 
 export function nextWeeklyOpen(now: Date): Date {
-  // Weekly open = Sunday 22:00 UTC (matches session.ts).
-  const d = new Date(now);
-  let t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 22, 0, 0);
-  const day = new Date(t).getUTCDay();
-  t += ((0 - day + 7) % 7) * 86400_000;
-  if (t <= now.getTime()) t += 7 * 86400_000;
-  return new Date(t);
+  // Weekly open = Sunday 17:00 New York (matches session.ts).
+  const ny = zonedParts(now, NEW_YORK);
+  const sunday = ny.day + ((0 - ny.weekday + 7) % 7);
+  const open = zonedTimeToUtc(ny.year, ny.month, sunday, WEEK_EDGE_HOUR_NY, 0, NEW_YORK);
+  return open > now ? open : zonedTimeToUtc(ny.year, ny.month, sunday + 7, WEEK_EDGE_HOUR_NY, 0, NEW_YORK);
 }

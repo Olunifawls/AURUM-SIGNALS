@@ -28,4 +28,41 @@ describe('isGoldMarketOpen', () => {
     expect(isGoldMarketOpen(sunClosed)).toBe(false);
     expect(isGoldMarketOpen(sunOpen)).toBe(true);
   });
+
+  // US clocks go forward 2026-03-08 and back 2026-11-01.
+  describe('across US daylight saving', () => {
+    it('closes at 22:00 UTC on the last Friday before clocks go forward (EST)', () => {
+      expect(isGoldMarketOpen(new Date('2026-03-06T21:59:00Z'))).toBe(true);
+      expect(isGoldMarketOpen(new Date('2026-03-06T22:00:00Z'))).toBe(false);
+    });
+
+    it('reopens at 21:00 UTC on the Sunday clocks go forward (02:00 local, already EDT by 17:00)', () => {
+      expect(isGoldMarketOpen(new Date('2026-03-08T20:59:00Z'))).toBe(false);
+      expect(isGoldMarketOpen(new Date('2026-03-08T21:00:00Z'))).toBe(true);
+    });
+
+    it('closes at 21:00 UTC on the first Friday of daylight saving', () => {
+      expect(isGoldMarketOpen(new Date('2026-03-13T20:59:00Z'))).toBe(true);
+      expect(isGoldMarketOpen(new Date('2026-03-13T21:00:00Z'))).toBe(false);
+    });
+
+    it('closes at 21:00 UTC on the last Friday before clocks go back (EDT)', () => {
+      expect(isGoldMarketOpen(new Date('2026-10-30T20:59:00Z'))).toBe(true);
+      expect(isGoldMarketOpen(new Date('2026-10-30T21:00:00Z'))).toBe(false);
+    });
+
+    it('reopens at 22:00 UTC on the Sunday clocks go back (EST by 17:00)', () => {
+      expect(isGoldMarketOpen(new Date('2026-11-01T21:59:00Z'))).toBe(false);
+      expect(isGoldMarketOpen(new Date('2026-11-01T22:00:00Z'))).toBe(true);
+    });
+
+    it('closes at 22:00 UTC on the first Friday after clocks go back', () => {
+      expect(isGoldMarketOpen(new Date('2026-11-06T21:59:00Z'))).toBe(true);
+      expect(isGoldMarketOpen(new Date('2026-11-06T22:00:00Z'))).toBe(false);
+    });
+
+    it('treats the UTC small hours of Saturday as Friday evening New York, still closed', () => {
+      expect(isGoldMarketOpen(new Date('2026-07-11T00:30:00Z'))).toBe(false);
+    });
+  });
 });

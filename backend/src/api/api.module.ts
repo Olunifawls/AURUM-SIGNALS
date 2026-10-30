@@ -12,6 +12,8 @@ import { ExecutionReadController } from './execution-read.controller';
 import { ExecutionReadService } from './execution-read.service';
 import { AdminResetController } from './admin-reset.controller';
 import { AdminResetService } from './admin-reset.service';
+import { ForwardTestController } from '../v1/ledger/forward-test.controller';
+import { ForwardTestService } from '../v1/ledger/forward-test.service';
 
 /**
  * Public read REST API + formalized health endpoint. Imports IngestionModule
@@ -24,7 +26,7 @@ import { AdminResetService } from './admin-reset.service';
  */
 @Module({
   imports: [SupabaseModule, IngestionModule, BrokerModule, AlertsModule, RiskModule, KillSwitchModule],
-  controllers: [ReadController, ExecutionReadController, AdminResetController],
-  providers: [ReadService, HealthService, ExecutionReadService, AdminResetService],
+  controllers: [ReadController, ExecutionReadController, AdminResetController, ForwardTestController],
+  providers: [ReadService, HealthService, ExecutionReadService, AdminResetService, ForwardTestService],
 })
 export class ApiModule {}

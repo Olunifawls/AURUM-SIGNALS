@@ -55,7 +55,7 @@ describe('(a) RiskManagerService logs rejections/warnings to risk_events', () =>
     return {
       now: MIDWEEK_OPEN, mode: 'demo', autoTradeEnabled: true, halted: false, resolvedDemoTrades: 100,
       session: { marketOpen: true, inFirstWindow: false, inLastWindow: false },
-      news: { inBlackout: false, degraded: true, source: 'fallback' }, volatilityCooldown: false,
+      news: { inBlackout: false, degraded: true, source: 'fallback', exhausted: false }, volatilityCooldown: false,
       brokerOpenTradeCount: 0, existingOpenSameDirTf: false, maxOpenPositions: 2,
       equity: 2000, accountCcy: 'GBP', gbpUsdRate: 1.25, referenceEquityDaily: 2000, referenceEquityWeekly: 2000, highWaterMark: 2000,
       maxDailyLossPct: 3, maxWeeklyLossPct: 6, maxTotalDrawdownPct: 20, spreadPoints: 0.3, maxSpreadPoints: 0.6,
@@ -63,6 +63,23 @@ describe('(a) RiskManagerService logs rejections/warnings to risk_events', () =>
       ...over,
     };
   }
+
+  it('an exhausted calendar blocks entries, logs it and alerts the admin', async () => {
+    const { client, inserted } = makeSupabase({});
+    const sendAdminError = jest.fn(async () => true);
+    const svc = new RiskManagerService(client, makeAdapter(), new TradingStateService(client), { ...noAlerts, sendAdminError });
+    const d = await svc.assess(intent, { context: ctx({ news: { inBlackout: false, degraded: true, source: 'fallback', exhausted: true } }) });
+    expect(d).toMatchObject({ approved: false, reason: 'NEWS_BLACKOUT' });
+    expect((inserted.risk_events as any[]).some((e) => e.event_type === 'NEWS_BLACKOUT' && e.meta?.calendarExhausted)).toBe(true);
+    expect(sendAdminError).toHaveBeenCalledWith('news-calendar', expect.stringContaining('Entries blocked'));
+  });
+
+  it('a market that is closed reports that, not the calendar', async () => {
+    const { client } = makeSupabase({});
+    const svc = new RiskManagerService(client, makeAdapter(), new TradingStateService(client), noAlerts);
+    const d = await svc.assess(intent, { context: ctx({ session: { marketOpen: false, inFirstWindow: false, inLastWindow: false }, news: { inBlackout: false, degraded: true, source: 'fallback', exhausted: true } }) });
+    expect(d.reason).toBe('MARKET_CLOSED');
+  });
 
   it('a rejection inserts a risk_events row with the reason', async () => {
     const { client, inserted } = makeSupabase({});

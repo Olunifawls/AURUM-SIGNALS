@@ -19,6 +19,8 @@ import {
 import { evaluateFromCandles, EvaluationResult } from './signal-engine';
 import { SizingService } from '../sizing/sizing.service';
 import { AlertsService } from '../alerts/alerts.service';
+import { formatVerdictLines } from '../alerts/alert-format';
+import { ChiefAnalystService, StoredEvaluation } from '../v1/chief/chief-analyst.service';
 
 const EVENT_SOURCE = 'signals';
 const FETCH_LIMIT = 500;
@@ -54,6 +56,7 @@ export class SignalsService {
     private readonly events: SystemEventsService,
     private readonly sizing: SizingService,
     private readonly alerts: AlertsService,
+    private readonly chief: ChiefAnalystService,
   ) {}
 
   private trackConfig(tf: Timeframe): TrackConfig | null {
@@ -182,6 +185,7 @@ export class SignalsService {
     const sizing = await this.sizing.computeForSignal(lv.entry, lv.stop, lv.takeProfit);
 
     const signalId = await this.insertSignal(tf, cfg.track, result, sizing);
+    const evaluation = await this.evaluateV1(signalId, tf, result);
 
     // INC-7: new-signal Telegram alert (core always; experimental only if the
     // ALERT_15MIN flag is on — handled inside AlertsService). Isolated so a
@@ -210,6 +214,8 @@ export class SignalsService {
         accountSize: sizing.account_size,
         accountCcy: sizing.account_ccy,
         sizingNote: sizing.sizing_note,
+        verdicts: evaluation ? formatVerdictLines(evaluation.eligible, evaluation.agents) : undefined,
+        aiSummary: evaluation?.aiSummary ?? undefined,
       });
     } catch (alertErr) {
       await this.events.warn(EVENT_SOURCE, `signal alert failed for ${tf}`, {
@@ -238,6 +244,25 @@ export class SignalsService {
       takeProfit: result.levels!.takeProfit,
       rr: result.levels!.rr,
     };
+  }
+
+  /** V1 evaluation of a stored signal. L1 never depends on it: a failure leaves the
+   * signal recorded with no evaluation, and execution refuses a signal without one. */
+  private async evaluateV1(signalId: string, tf: Timeframe, result: EvaluationResult): Promise<StoredEvaluation | null> {
+    const lv = result.levels!;
+    try {
+      return await this.chief.evaluate(signalId, {
+        timeframe: tf,
+        direction: result.direction as Direction,
+        entry: lv.entry,
+        stop: lv.stop,
+        target: lv.takeProfit,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      await this.events.warn(EVENT_SOURCE, `v1 evaluation failed for ${signalId}; it cannot execute`, { signalId, error: String(err) });
+      return null;
+    }
   }
 
   private buildFactorsJson(

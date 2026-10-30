@@ -132,3 +132,38 @@ describe('isSanePriceMove', () => {
     expect(isSanePriceMove(NaN, 4000)).toBe(false);
   });
 });
+
+describe('nextWeeklyOpen follows New York time', () => {
+  const next = (t: string) => nextWeeklyOpen(new Date(t)).toISOString();
+
+  it('is 22:00 UTC in winter and 21:00 UTC in daylight saving', () => {
+    expect(next('2026-12-02T12:00:00Z')).toBe('2026-12-06T22:00:00.000Z');
+    expect(next('2026-07-08T12:00:00Z')).toBe('2026-07-12T21:00:00.000Z');
+  });
+
+  it('uses the new offset when clocks go forward that Sunday', () => {
+    expect(next('2026-03-04T12:00:00Z')).toBe('2026-03-08T21:00:00.000Z');
+  });
+
+  it('uses the new offset when clocks go back that Sunday', () => {
+    expect(next('2026-10-28T12:00:00Z')).toBe('2026-11-01T22:00:00.000Z');
+  });
+
+  it('rolls to the next week at the open itself, and not before', () => {
+    expect(next('2026-07-12T20:59:00Z')).toBe('2026-07-12T21:00:00.000Z');
+    expect(next('2026-07-12T21:00:00Z')).toBe('2026-07-19T21:00:00.000Z');
+  });
+
+  it('handles a Sunday evening New York that is already Monday in UTC', () => {
+    expect(next('2026-07-13T00:30:00Z')).toBe('2026-07-19T21:00:00.000Z');
+  });
+
+  it('crosses a month end', () => {
+    expect(next('2026-10-30T12:00:00Z')).toBe('2026-11-01T22:00:00.000Z');
+  });
+
+  it('feeds the weekly-loss halt reset', () => {
+    const h = evalWeeklyLoss({ weeklyLossPct: 7, maxWeeklyPct: 6, now: new Date('2026-07-08T12:00:00Z') });
+    expect(h?.clearsAt?.toISOString()).toBe('2026-07-12T21:00:00.000Z');
+  });
+});

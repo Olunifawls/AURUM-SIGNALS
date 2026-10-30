@@ -188,3 +188,43 @@ export interface ExecRiskEvent {
   message: string;
   mode: string | null;
 }
+
+export interface ForwardTestGroup {
+  signals: number;
+  resolved: number;
+  wins: number;
+  losses: number;
+  totalR: number;
+}
+
+export interface ForwardTestWatch {
+  events: Array<{ positionId: string | null; agent: string; barTs: string; price: number | null; rAtEvent: number | null; finalR: number | null }>;
+  settled: number;
+  actedR: number;
+  heldR: number;
+}
+
+export interface ForwardTestReport {
+  ruleset: string;
+  newsExitMode: 'SHADOW' | 'HARD';
+  kept: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
+  vetoed: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
+  byVerdict: Array<ForwardTestGroup & { agent: string; verdict: string }>;
+  newsExits: {
+    trades: Array<{ positionId: string | null; event: string | null; at: string | null; exitR: number | null; holdR: number | null }>;
+    settled: number;
+    exitR: number;
+    holdR: number;
+  };
+  thesisWatch: ForwardTestWatch;
+  dollarShock: ForwardTestWatch;
+  recent: Array<{
+    signalId: string;
+    timeframe: string;
+    createdAt: string;
+    status: string;
+    eligible: boolean;
+    agents: Array<{ agent: string; verdict: string; hard: boolean }>;
+    aiSummary: string | null;
+  }>;
+}

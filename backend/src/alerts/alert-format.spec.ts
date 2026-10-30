@@ -1,5 +1,6 @@
 import {
   formatNewSignal,
+  formatVerdictLines,
   formatResolution,
   shouldAlertSignal,
   isFeedStale,
@@ -119,5 +120,29 @@ describe('(g) HEARTBEAT — feed stale detection', () => {
   });
   it('is stale when market open and there is no ingestion at all', () => {
     expect(isFeedStale(null, now, true)).toBe(true);
+  });
+});
+
+describe('V1 verdict lines', () => {
+  const agents = [
+    { agent: 'regime', verdict: 'PASS', hard: true },
+    { agent: 'dollar', verdict: 'FAIL', hard: true },
+    { agent: 'sentiment', verdict: 'SUPPORT', hard: false },
+  ];
+
+  it('gives the decision, then one line per agent, marking shadow agents', () => {
+    expect(formatVerdictLines(false, agents)).toEqual(['V1: VETOED', 'Regime: PASS', 'Dollar: FAIL', 'COT: SUPPORT (shadow)']);
+    expect(formatVerdictLines(true, [])).toEqual(['V1: ELIGIBLE']);
+  });
+
+  it('adds the verdicts and AI summary above the disclaimer', () => {
+    const out = formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts: ['V1: ELIGIBLE', 'Regime: PASS'], aiSummary: 'A short summary.' }).split('\n');
+    const at = out.indexOf('V1: ELIGIBLE');
+    expect(out.slice(at, at + 3)).toEqual(['V1: ELIGIBLE', 'Regime: PASS', 'A short summary.']);
+    expect(out[at + 3]).toContain('Analysis only');
+  });
+
+  it('leaves the message unchanged when the signal was not evaluated', () => {
+    expect(formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts: undefined, aiSummary: undefined })).toBe(formatNewSignal(SAMPLE_ALERT_SIGNAL));
   });
 });

@@ -30,6 +30,8 @@ export interface AlertSignal {
   accountSize: number;
   accountCcy: string;
   sizingNote?: string; // fallback line when position is too small / unavailable
+  verdicts?: string[]; // V1: one line per agent, absent if the signal was not evaluated
+  aiSummary?: string;
 }
 
 export interface AlertResolution {
@@ -113,8 +115,31 @@ function buildNewSignal(s: AlertSignal): string {
       f.F5,
     )} Momentum ${c(f.F6)}`,
     sizingLine,
+    ...(s.verdicts ?? []),
+    ...(s.aiSummary ? [s.aiSummary] : []),
     DISCLAIMER,
   ].join('\n');
+}
+
+const AGENT_LABEL: Record<string, string> = {
+  technical: 'Technical',
+  regime: 'Regime',
+  dollar: 'Dollar',
+  yields10y: 'Yields 10Y',
+  yields2y: 'Yields 2Y',
+  sentiment: 'COT',
+  news: 'News',
+};
+
+/** The V1 verdict block: the overall decision, then one line per agent. */
+export function formatVerdictLines(
+  eligible: boolean,
+  agents: Array<{ agent: string; verdict: string; hard: boolean }>,
+): string[] {
+  return [
+    `V1: ${eligible ? 'ELIGIBLE' : 'VETOED'}`,
+    ...agents.map((a) => `${AGENT_LABEL[a.agent] ?? a.agent}: ${a.verdict}${a.hard ? '' : ' (shadow)'}`),
+  ];
 }
 
 export function formatNewSignal(s: AlertSignal): string {
@@ -151,11 +176,13 @@ export function formatHaltAlert(haltType: string, reason: string): string {
 export function formatDailyStatus(i: {
   halts: Array<{ haltType: string; reason?: string }>;
   daysSinceLastTrade: number | null;
+  calendarWarning?: string | null;
 }): string {
   const lines = ['📋 AURUM daily status'];
   lines.push(i.halts.length ? `Active halts: ${i.halts.length}` : 'Active halts: none');
   for (const h of i.halts) lines.push(`• ${h.haltType}: ${h.reason ?? 'no reason recorded'}`);
   lines.push(i.daysSinceLastTrade === null ? 'Last trade: no trades recorded' : `Last trade: ${i.daysSinceLastTrade} days ago`);
+  if (i.calendarWarning) lines.push(i.calendarWarning);
   return lines.join('\n');
 }
 

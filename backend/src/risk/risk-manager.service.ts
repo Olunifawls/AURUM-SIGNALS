@@ -41,6 +41,11 @@ export class RiskManagerService {
         .sendAdminError('news-degraded', 'News blackout coverage DEGRADED (fallback calendar; no live API key).')
         .catch(() => undefined);
     }
+    if (decision.events.some((e) => e.meta?.calendarExhausted)) {
+      void this.alerts
+        .sendAdminError('news-calendar', 'Entries blocked: the economic calendar has no upcoming events. Add the new BLS and Fed dates.')
+        .catch(() => undefined);
+    }
     this.logger.log(
       `assess ${intent.side} ${intent.timeframe} -> ${decision.approved ? `APPROVED units=${decision.sizing?.units}` : `REJECTED ${decision.reason}`}`,
     );
@@ -75,7 +80,7 @@ export class RiskManagerService {
       session: sessionFlags(now),
       news: (() => {
         const b = this.news.isInBlackout(now);
-        return { inBlackout: b.blackout, degraded: this.news.degraded, source: this.news.source };
+        return { inBlackout: b.blackout, degraded: this.news.degraded, source: this.news.source, exhausted: this.news.isExhausted(now) };
       })(),
       volatilityCooldown,
       brokerOpenTradeCount: openTrades.length,

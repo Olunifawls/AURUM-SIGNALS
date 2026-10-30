@@ -48,7 +48,7 @@ export interface RiskContext {
   // check 3 (precomputed session flags, see session.ts)
   session: { marketOpen: boolean; inFirstWindow: boolean; inLastWindow: boolean };
   // check 4
-  news: { inBlackout: boolean; degraded: boolean; source: string };
+  news: { inBlackout: boolean; degraded: boolean; source: string; exhausted: boolean };
   // check 4a
   volatilityCooldown: boolean;
   // check 5 (live broker state — D9)

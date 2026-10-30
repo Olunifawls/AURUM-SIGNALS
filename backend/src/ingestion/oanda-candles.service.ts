@@ -36,11 +36,12 @@ export class OandaCandlesService {
     return process.env.OANDA_API_TOKEN_DEMO || '';
   }
 
-  private async rawCandles(instrument: string, granularity: string, count: number): Promise<any[]> {
+  private async rawCandles(instrument: string, granularity: string, count: number, from?: string): Promise<any[]> {
     // alignmentTimezone=UTC + dailyAlignment=0 => H4 aligns to 00/04/08/12/16/20 UTC, D to 00:00 UTC.
     const url =
       `${OANDA_URL}/v3/instruments/${instrument}/candles` +
-      `?price=M&granularity=${granularity}&count=${count}&alignmentTimezone=UTC&dailyAlignment=0`;
+      `?price=M&granularity=${granularity}&count=${count}&alignmentTimezone=UTC&dailyAlignment=0` +
+      (from ? `&from=${from}` : '');
     const json = await fetchJson<{ candles?: any[] }>(url, {
       headers: { Authorization: `Bearer ${this.token}`, 'Accept-Datetime-Format': 'RFC3339' },
     });
@@ -53,7 +54,16 @@ export class OandaCandlesService {
    * future-dated (> now+1min), non-finite / non-positive OHLC.
    */
   async fetchCandles(tf: Timeframe, count = 400): Promise<CandleRow[]> {
-    const raw = await this.rawCandles(XAU, GRANULARITY[tf], count);
+    return this.completeRows(await this.rawCandles(XAU, GRANULARITY[tf], count));
+  }
+
+  /** COMPLETE mid candles for any instrument, same settings and same junk filter as gold.
+   * With `from`, reads forward from that date instead of back from now. */
+  async fetchInstrument(instrument: string, granularity: string, opts: { count: number; from?: string }): Promise<CandleRow[]> {
+    return this.completeRows(await this.rawCandles(instrument, granularity, opts.count, opts.from));
+  }
+
+  private completeRows(raw: any[]): CandleRow[] {
     const cutoff = Date.now() + 60_000;
     const out: CandleRow[] = [];
     for (const c of raw) {

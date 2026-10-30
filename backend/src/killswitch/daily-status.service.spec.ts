@@ -51,4 +51,37 @@ describe('DailyStatusService', () => {
     await svc.sendDailyStatus(NOW);
     expect(alerts.send).not.toHaveBeenCalled();
   });
+
+  describe('calendar expiry warning', () => {
+    // The real calendar's last event is 2027-12-15 13:30 UTC.
+    const SOON = new Date('2027-11-01T08:00:00Z');
+    const FAR = new Date('2027-10-01T08:00:00Z');
+    const recent = (now: Date) => [{ opened_at: new Date(now.getTime() - 86400_000).toISOString() }];
+
+    it('adds the warning under 60 days', async () => {
+      const { svc, alerts } = make({ halts: [halt], rows: recent(SOON) });
+      await svc.sendDailyStatus(SOON);
+      expect(alerts.send.mock.calls[0][0]).toContain('last event is 2027-12-15, 45 days away');
+    });
+
+    it('sends even when nothing else is wrong, so a healthy system still sees it', async () => {
+      const { svc, alerts } = make({ rows: recent(SOON) });
+      await svc.sendDailyStatus(SOON);
+      expect(alerts.send).toHaveBeenCalledTimes(1);
+      expect(alerts.send.mock.calls[0][0]).toContain('Economic calendar');
+    });
+
+    it('stays out of the message at 60 days or more', async () => {
+      const { svc, alerts } = make({ halts: [halt], rows: recent(FAR) });
+      await svc.sendDailyStatus(FAR);
+      expect(alerts.send.mock.calls[0][0]).not.toContain('Economic calendar');
+    });
+
+    it('says entries are blocked once the calendar has run out', async () => {
+      const LATE = new Date('2027-12-20T08:00:00Z');
+      const { svc, alerts } = make({ rows: recent(LATE) });
+      await svc.sendDailyStatus(LATE);
+      expect(alerts.send.mock.calls[0][0]).toContain('Entries are blocked');
+    });
+  });
 });
