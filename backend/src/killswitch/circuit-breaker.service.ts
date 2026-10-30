@@ -57,8 +57,12 @@ export class CircuitBreakerService {
     private readonly alerts: AlertsService,
   ) {}
 
-  /** Set the halt, log a TRADING_HALTED risk_events row, send a Telegram alert. */
+  /** Set the halt, log a TRADING_HALTED risk_events row, send a Telegram alert.
+   * No-op while the same halt is already active: the breakers re-evaluate every
+   * cycle, so without this each one re-fires for as long as its condition holds. */
   async applySpec(spec: HaltSpec): Promise<void> {
+    const active = await this.state.getActiveHalts();
+    if (active.some((h) => h.halt_type === spec.type)) return;
     await this.state.setHalt(spec.type, {
       scope: spec.scope,
       reason: spec.reason,
@@ -243,9 +247,16 @@ export class CircuitBreakerService {
     return data?.length && data[0].high_water_mark != null ? Number(data[0].high_water_mark) : null;
   }
 
+  /** Close reasons (most recent first) since CONSECUTIVE_SL was last cleared by
+   * /resume or a reset. A halted system opens no trades, so without this baseline
+   * the same closes would re-trigger the halt straight after every /resume. */
   private async recentCloseReasons(): Promise<string[]> {
     if (!this.supabase) return [];
-    const { data } = await this.supabase.from('positions').select('close_reason').eq('status', 'CLOSED').order('closed_at', { ascending: false }).limit(10);
+    const { data: halts } = await this.supabase.from('system_halts').select('cleared_at').eq('halt_type', 'CONSECUTIVE_SL').limit(1);
+    const clearedAt = halts?.[0]?.cleared_at as string | null | undefined;
+    let query = this.supabase.from('positions').select('close_reason').eq('status', 'CLOSED');
+    if (clearedAt) query = query.gt('closed_at', clearedAt);
+    const { data } = await query.order('closed_at', { ascending: false }).limit(10);
     return (data ?? []).map((r) => r.close_reason as string);
   }
 

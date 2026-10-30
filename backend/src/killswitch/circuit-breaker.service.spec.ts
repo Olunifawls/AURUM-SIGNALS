@@ -20,24 +20,29 @@ function primeSession(svc: CircuitBreakerService): void {
 
 /** Supabase mock with per-table overrides. Falls back to empty data. */
 function makeSupabase(tableData: Record<string, any[]> = {}) {
+  const inserted: Record<string, any[]> = {};
   return {
+    inserted,
     from: (table: string) => {
       const rows = tableData[table] ?? [];
       let eqFilters: [string, unknown][] = [];
+      let gtFilters: [string, string][] = [];
       const b: any = {
         select: () => b,
         eq: (k: string, v: unknown) => { eqFilters = [...eqFilters, [k, v]]; return b; },
+        gt: (k: string, v: string) => { gtFilters = [...gtFilters, [k, v]]; return b; },
         lte: () => b,
         order: () => b,
         upsert: () => Promise.resolve({ error: null }),
-        insert: () => Promise.resolve({ error: null }),
+        insert: (row: any) => { (inserted[table] ??= []).push(row); return Promise.resolve({ error: null }); },
         update: () => ({ eq: () => Promise.resolve({ error: null }) }),
         limit: (n: number) => {
           // Filter indicator_snapshots and candles rows by timeframe eq.
           const tfFilter = eqFilters.find(([k]) => k === 'timeframe');
-          const filtered = tfFilter
+          const filtered = (tfFilter
             ? rows.filter((r: any) => r.timeframe == null || r.timeframe === tfFilter[1])
-            : rows;
+            : rows
+          ).filter((r: any) => gtFilters.every(([k, v]) => r[k] > v));
           return Promise.resolve({ data: filtered.slice(0, n), error: null, count: filtered.length });
         },
       };
@@ -462,6 +467,52 @@ describe('FEED_STALE — staleness from bar close time', () => {
     await svc.runBreakers(NOW);
     const calls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'FEED_STALE');
     expect(calls).toHaveLength(0);
+  });
+});
+
+// ─── CONSECUTIVE_SL — resume baseline + no re-fire while active ──────────────
+
+describe('CONSECUTIVE_SL — only closes after the last resume count, active halt never re-fires', () => {
+  const RESUMED_AT = new Date(NOW.getTime() - 3600_000).toISOString();
+  const BEFORE = new Date(NOW.getTime() - 2 * 3600_000).toISOString();
+  const AFTER = new Date(NOW.getTime() - 60_000).toISOString();
+  const slHits = (closedAt: string) => Array.from({ length: 4 }, () => ({ close_reason: 'SL_HIT', closed_at: closedAt }));
+  const base = (positions: any[], halts: any[]) =>
+    makeSupabase({
+      equity_snapshots: [{ equity: 10_000, high_water_mark: 10_000 }],
+      candles: [{ timeframe: '15min', ts: RECENT_TS, open: 4100, high: 4105, low: 4099, close: 4124 }],
+      positions,
+      system_halts: halts,
+    });
+
+  it('does not re-fire after /resume on closes from before the resume', async () => {
+    const state = makeState();
+    const sb = base(slHits(BEFORE), [{ halt_type: 'CONSECUTIVE_SL', active: false, cleared_at: RESUMED_AT }]);
+    const svc = new CircuitBreakerService(sb, makeBroker(), state, alerts);
+    primeSession(svc);
+    await svc.runBreakers(NOW);
+    expect(state.setHalt).not.toHaveBeenCalledWith('CONSECUTIVE_SL', expect.anything());
+  });
+
+  it('fires again on 4 new SL hits after the resume', async () => {
+    const state = makeState();
+    const sb = base(slHits(AFTER), [{ halt_type: 'CONSECUTIVE_SL', active: false, cleared_at: RESUMED_AT }]);
+    const svc = new CircuitBreakerService(sb, makeBroker(), state, alerts);
+    primeSession(svc);
+    await svc.runBreakers(NOW);
+    expect(state.setHalt).toHaveBeenCalledWith('CONSECUTIVE_SL', expect.anything());
+  });
+
+  it('inserts no risk_event and re-sets nothing while the same halt is already active', async () => {
+    const state = makeState({ activeHalts: [{ halt_type: 'CONSECUTIVE_SL', active: true, requires_manual: true }] });
+    const quietAlerts = { sendAdminError: jest.fn(async () => true) } as any;
+    const sb = base(slHits(BEFORE), [{ halt_type: 'CONSECUTIVE_SL', active: true, cleared_at: null }]);
+    const svc = new CircuitBreakerService(sb, makeBroker(), state, quietAlerts);
+    primeSession(svc);
+    await svc.runBreakers(NOW);
+    expect(state.setHalt).not.toHaveBeenCalled();
+    expect(sb.inserted.risk_events).toBeUndefined();
+    expect(quietAlerts.sendAdminError).not.toHaveBeenCalled();
   });
 });
 
