@@ -114,7 +114,8 @@ export class ReconciliationService implements OnModuleInit {
               close_reason: reason,
               updated_at: now,
             })
-            .eq('id', pos.id);
+            .eq('id', pos.id)
+            .eq('status', 'OPEN'); // a closer that got here first (news exit) keeps its reason
           closedByBroker++;
           mismatches++;
           await this.logMismatch('position_closed_at_broker', `position ${pos.id} closed at broker (${reason}, pl=${trade.realizedPl})`, { positionId: pos.id, tradeId });

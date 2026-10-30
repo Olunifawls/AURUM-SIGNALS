@@ -61,6 +61,11 @@ export class ExecutionService {
     // Startup-reconcile gate (D7/B6): no order until the first reconcile completes.
     if (!this.readiness.isReady()) return { executed: false, reason: 'reconcile_pending' };
 
+    // V1 chief analyst: only an evaluated, eligible signal goes further. The existing
+    // gates below run after it, unchanged. No evaluation means no order (fail closed).
+    const veto = await this.v1Veto(sig);
+    if (veto) return { executed: false, reason: veto };
+
     // A signal left without an order (market closed, halted, risk rejected) stays
     // OPEN and is re-polled every 2 min, so it must not be traded once it has aged out.
     if (isSignalStale(sig.created_at, sig.timeframe, new Date())) {
@@ -228,6 +233,18 @@ export class ExecutionService {
     for (const sig of sigs) {
       if (!withOrder.has(sig.id)) await this.executeSignal(sig as SignalForExec);
     }
+  }
+
+  /** Why V1 blocks this signal, or null if it is eligible. */
+  private async v1Veto(sig: SignalForExec): Promise<string | null> {
+    if (!this.supabase) return 'v1_evaluation_missing';
+    const { data, error } = await this.supabase.from('signal_evaluations').select('eligible,agents').eq('signal_id', sig.id).limit(1);
+    const row = data?.[0] as { eligible: boolean; agents: Array<{ agent: string; verdict: string; hard: boolean }> } | undefined;
+    if (error || !row) return 'v1_evaluation_missing'; // also the normal state for a just-fired signal
+    if (row.eligible === true) return null;
+    const blocked = (row.agents ?? []).filter((a) => a.hard && a.verdict !== 'PASS');
+    await this.logRejectionOnce('V1_VETO', sig, `signal ${sig.id} vetoed by ${blocked.map((a) => `${a.agent} ${a.verdict}`).join(', ') || 'ruleset'}; not traded`, { blocked });
+    return 'v1_veto';
   }
 
   private async brokerAccountId(): Promise<string | null> {

@@ -6,7 +6,8 @@ function makeSupabase(handlers: Record<string, () => any> = {}) {
   const updated: Record<string, any[]> = {};
   const selects: Record<string, string> = {};
   const from = (table: string) => {
-    const term = () => Promise.resolve(handlers[table] ? handlers[table]() : { data: [] });
+    const fallback = table === 'signal_evaluations' ? { data: [{ eligible: true, agents: [] }] } : { data: [] };
+    const term = () => Promise.resolve(handlers[table] ? handlers[table]() : fallback);
     const b: any = {
       select: (cols: string) => { selects[table] = cols; return b; },
       eq: () => b,
@@ -240,5 +241,67 @@ describe('time stop stores the broker close time', () => {
 
     expect(updated.positions?.[0]).toMatchObject({ close_reason: 'TIME_STOP', closed_at: '2026-07-20T11:59:58.000Z' });
     process.env = { ...OLD };
+  });
+});
+
+describe('V1 chief-analyst gate', () => {
+  const OLD = { ...process.env };
+  beforeEach(() => { delete process.env.AUTO_TRADE_ENABLED; });
+  afterEach(() => (process.env = { ...OLD }));
+
+  const run = async (evaluations: any, sig: SignalForExec = coreSignal) => {
+    const db = makeSupabase({ broker_accounts: () => ({ data: [{ id: 'ba-1' }] }), signal_evaluations: () => evaluations });
+    const risk = makeRisk();
+    const placement = makePlacement();
+    const out = await new ExecutionService(db.client, adapter, risk, placement, ready(true)).executeSignal(sig);
+    return { out, risk, placement, events: db.inserted.risk_events ?? [] };
+  };
+  const hard = (agent: string, verdict: string) => ({ agent, verdict, hard: true });
+
+  it('an eligible signal reaches the risk manager and is placed', async () => {
+    const { out, risk } = await run({ data: [{ eligible: true, agents: [] }] });
+    expect(risk.assess).toHaveBeenCalled();
+    expect(out.executed).toBe(true);
+  });
+
+  it('a vetoed signal stops before risk, naming the agents, logged once', async () => {
+    const { out, risk, placement, events } = await run({ data: [{ eligible: false, agents: [hard('regime', 'PASS'), hard('dollar', 'FAIL')] }] });
+    expect(out).toEqual({ executed: false, reason: 'v1_veto' });
+    expect(risk.assess).not.toHaveBeenCalled();
+    expect(placement.placeForSignal).not.toHaveBeenCalled();
+    expect(events[0]).toMatchObject({ event_type: 'V1_VETO', signal_id: 'sig-1' });
+    expect(events[0].message).toContain('dollar FAIL');
+    expect(events[0].message).not.toContain('regime');
+  });
+
+  it('DATA_MISSING on a HARD agent blocks like a FAIL', async () => {
+    const { out } = await run({ data: [{ eligible: false, agents: [hard('regime', 'DATA_MISSING')] }] });
+    expect(out.reason).toBe('v1_veto');
+  });
+
+  it('fails closed with no evaluation, without logging a veto', async () => {
+    const { out, risk, events } = await run({ data: [] });
+    expect(out).toEqual({ executed: false, reason: 'v1_evaluation_missing' });
+    expect(risk.assess).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it('fails closed when the evaluation cannot be read', async () => {
+    const { out, risk } = await run({ data: null, error: { message: 'down' } });
+    expect(out.reason).toBe('v1_evaluation_missing');
+    expect(risk.assess).not.toHaveBeenCalled();
+  });
+
+  it('a 1h signal the chief analyst vetoed is never executed', async () => {
+    const { out, risk } = await run({ data: [{ eligible: false, agents: [hard('technical', 'FAIL')] }] }, { ...coreSignal, timeframe: '1h' });
+    expect(out.reason).toBe('v1_veto');
+    expect(risk.assess).not.toHaveBeenCalled();
+  });
+
+  it('the existing stale-signal gate still runs after an eligible verdict', async () => {
+    const old = new Date(Date.now() - 5 * 3600_000).toISOString();
+    const { out, risk } = await run({ data: [{ eligible: true, agents: [] }] }, { ...coreSignal, created_at: old });
+    expect(out.reason).toBe('signal_stale');
+    expect(risk.assess).not.toHaveBeenCalled();
   });
 });
