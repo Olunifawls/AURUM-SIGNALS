@@ -9,6 +9,7 @@ const LINKS = [
   { href: '/history', label: 'History' },
   { href: '/performance', label: 'Performance' },
   { href: '/execution', label: 'Execution' },
+  { href: '/forward-test', label: 'Forward Test' },
   { href: '/settings', label: 'Settings' },
   { href: '/profile', label: 'Profile' },
 ];
