@@ -39,7 +39,7 @@ Three independent checks, each with its own state file in `/run/aurum-watchdog/`
 
 | Check | Test | On failure | State file |
 |---|---|---|---|
-| Backend | `docker exec aurum-backend-1` runs node's fetch on `http://localhost:3001/api/health` with a 10s timeout. Healthy = HTTP 200 and JSON with `ts`. | 3 consecutive failures: restart `aurum-backend-1` + Telegram alert | `backend.fails` |
+| Backend | `docker exec aurum-backend-1` runs node's fetch on `http://localhost:3001/health` with a 10s timeout. Healthy = HTTP 200 and JSON with `status: "ok"` and `ts`. | 3 consecutive failures: restart `aurum-backend-1` + Telegram alert, capped below | `backend.fails`, `restarts.log`, `restart_cap.alerted` |
 | Public | `https://aurum.mcnifglobal.com/login` is HTTP 200 over a valid certificate (no `-k`, no redirects followed) | Telegram alert, at most once per hour. Never restarts. | `public.last_alert` |
 | Certificate | Certificate served on 443 expires within 14 days | Telegram alert, at most once per day. Never restarts. | `cert.last_alert` |
 
@@ -49,6 +49,16 @@ public site: when the certificate expired on 3 Oct (renewed on disk, nginx never
 restarted), every check failed and a healthy backend was restarted 9,123 times in 4
 weeks. It also counted the login redirect (HTTP 307) as healthy, so it could not see
 a dead backend. The certbot deploy hook above fixes that expiry's cause.
+
+The backend check uses `/health`, not `/api/health`, because `/api/health` queries
+Supabase and restarting the backend cannot fix a database outage. `/health` only
+proves the process is serving requests: a backend that cannot reach Supabase stays
+"healthy" here.
+
+**Restart cap:** at most 3 restarts in any rolling 60 minutes, counting failed
+attempts. The next one is refused and a single Telegram alert says the backend needs
+a human; later runs only log. If the backend is still down when the oldest restart
+ages out, it restarts straight away. A reboot empties `/run`, which resets the cap.
 
 An alert timer only starts once Telegram accepts the message, so a Telegram outage
 retries next cycle. If the certificate cannot be read at all, the check logs that and
@@ -62,6 +72,9 @@ live counter or alert timers:
 WATCHDOG_DRY_RUN=1 /usr/local/bin/aurum-watchdog.sh
 ```
 Logs: `journalctl -t aurum-watchdog -n 50`
+
+Tests, on a dev machine rather than the VPS: `bash ops/aurum-watchdog.test.sh`. They
+stub `docker` and Telegram and need ports 3001, 18080 and 18443 free.
 
 ## What was and was NOT restricted (deliberately conservative — no lockout risk)
 - **NOT changed:** `sshd_config` untouched — root SSH key login stays enabled

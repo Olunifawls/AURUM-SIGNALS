@@ -2,15 +2,19 @@
 # AURUM watchdog (L2-INC-6). Runs every minute from aurum-watchdog.timer. Installed
 # at /usr/local/bin/ on the VPS. Three independent checks, each with its own state:
 #
-#   1. Backend: GET /api/health from INSIDE the container. 3 consecutive failures ->
+#   1. Backend: GET /health from INSIDE the container. 3 consecutive failures ->
 #      restart aurum-backend-1 + Telegram alert. The ONLY check that may restart.
+#      At most 3 restarts in any rolling 60 minutes: past that it alerts once that
+#      a human is needed and stops restarting until the window clears.
 #   2. Public: https://aurum.mcnifglobal.com/login must be HTTP 200 over a valid
 #      certificate. Failure -> Telegram alert, at most once per hour.
 #   3. Certificate: served cert expires within 14 days -> Telegram alert, at most
 #      once per day.
 #
 # Check 1 must never go through the public site: on 3 Oct an expired certificate
-# made every check fail and a healthy backend was restarted 9,123 times.
+# made every check fail and a healthy backend was restarted 9,123 times. It uses
+# /health, not /api/health, because /api/health queries Supabase and restarting the
+# backend cannot fix a database outage.
 #
 # WATCHDOG_DRY_RUN=1 logs each restart or alert instead of doing it, and keeps its
 # state apart so a dry run cannot touch the live counters or alert timers.
@@ -24,6 +28,8 @@ CERT_PORT="${CERT_PORT:-443}"
 DRY_RUN="${WATCHDOG_DRY_RUN:-0}"
 
 BACKEND_FAIL_LIMIT=3
+RESTART_CAP=3
+RESTART_WINDOW=3600
 PUBLIC_ALERT_EVERY=3600
 CERT_ALERT_EVERY=86400
 CERT_WARN_SECONDS=$((14 * 86400))
@@ -32,17 +38,19 @@ STATE_DIR="${STATE_DIR:-/run/aurum-watchdog}"
 [ "$DRY_RUN" = "1" ] && STATE_DIR="${STATE_DIR}.dry-run"
 mkdir -p "$STATE_DIR"
 BACKEND_STATE="$STATE_DIR/backend.fails"
+RESTART_LOG="$STATE_DIR/restarts.log"
+RESTART_CAP_FLAG="$STATE_DIR/restart_cap.alerted"
 PUBLIC_STATE="$STATE_DIR/public.last_alert"
 CERT_STATE="$STATE_DIR/cert.last_alert"
 
-# Exits 0 only on HTTP 200 with a JSON body that has "ts". Single quotes are
+# Exits 0 only on HTTP 200 with JSON status "ok" and a "ts". Single quotes are
 # deliberate: this is JavaScript for the container, not for this shell.
 # shellcheck disable=SC2016
 HEALTH_JS='
-fetch("http://localhost:3001/api/health", { signal: AbortSignal.timeout(10000) })
+fetch("http://localhost:3001/health", { signal: AbortSignal.timeout(10000) })
   .then(async (r) => {
     const body = await r.json();
-    process.exit(r.status === 200 && body && body.ts ? 0 : 1);
+    process.exit(r.status === 200 && body && body.status === "ok" && body.ts ? 0 : 1);
   })
   .catch(() => process.exit(1));
 '
@@ -97,6 +105,24 @@ alert_throttled() {
   send_telegram "$text" && echo "$now" >"$state"
 }
 
+# Drop restarts older than the window; print how many remain.
+recent_restarts() {
+  local cutoff kept
+  cutoff=$(($(date +%s) - RESTART_WINDOW))
+  kept=$(awk -v cutoff="$cutoff" '/^[0-9]+$/ && $1 > cutoff' "$RESTART_LOG" 2>/dev/null)
+  printf '%s' "${kept:+$kept$'\n'}" >"$RESTART_LOG"
+  grep -c . "$RESTART_LOG"
+}
+
+# Cap reached: alert once, then log only. The flag only clears when a restart is
+# allowed again, so a backend that recovers and fails inside the window stays quiet.
+refuse_restart() {
+  log "restart cap reached ($RESTART_CAP in ${RESTART_WINDOW}s): not restarting $BACKEND_CONTAINER"
+  [ -e "$RESTART_CAP_FLAG" ] && return 0
+  send_telegram "🔴 AURUM watchdog: restart cap hit ($RESTART_CAP restarts in 60 minutes). Not restarting ${BACKEND_CONTAINER} again; the backend needs a human, on $(hostname)." &&
+    touch "$RESTART_CAP_FLAG"
+}
+
 check_backend() {
   local fails
   if timeout -k 5 20 docker exec "$BACKEND_CONTAINER" node -e "$HEALTH_JS" >/dev/null 2>&1; then
@@ -110,6 +136,15 @@ check_backend() {
   log "backend health check FAILED ($fails/$BACKEND_FAIL_LIMIT)"
   [ "$fails" -lt "$BACKEND_FAIL_LIMIT" ] && return 0
 
+  # The failure count stays up while capped, so a restart follows as soon as the
+  # window clears if the backend is still down.
+  if [ "$(recent_restarts)" -ge "$RESTART_CAP" ]; then
+    refuse_restart
+    return 0
+  fi
+
+  rm -f "$RESTART_CAP_FLAG"
+  date +%s >>"$RESTART_LOG" # attempts count: a failing restart must hit the cap too
   echo 0 >"$BACKEND_STATE"
   if [ "$DRY_RUN" = "1" ]; then
     log "DRY RUN: would restart $BACKEND_CONTAINER after $fails failures"
