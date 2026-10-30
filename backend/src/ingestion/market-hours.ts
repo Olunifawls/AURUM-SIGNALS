@@ -1,5 +1,8 @@
 import { NEW_YORK, zonedParts } from '../common/timezone';
 
+/** New York hour of both the Friday close and the Sunday open. */
+export const WEEK_EDGE_HOUR_NY = 17;
+
 /**
  * Gold (XAU/USD) spot market hours.
  *
@@ -12,8 +15,8 @@ export function isGoldMarketOpen(nowUtc: Date): boolean {
   const { weekday, hour } = zonedParts(nowUtc, NEW_YORK);
 
   if (weekday === 6) return false; // all of Saturday
-  if (weekday === 5 && hour >= 17) return false; // Friday from 17:00 New York
-  if (weekday === 0 && hour < 17) return false; // Sunday before 17:00 New York
+  if (weekday === 5 && hour >= WEEK_EDGE_HOUR_NY) return false; // Friday from 17:00 New York
+  if (weekday === 0 && hour < WEEK_EDGE_HOUR_NY) return false; // Sunday before 17:00 New York
 
   return true;
 }
