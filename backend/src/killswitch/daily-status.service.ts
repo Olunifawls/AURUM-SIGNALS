@@ -5,6 +5,7 @@ import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { AlertsService } from '../alerts/alerts.service';
 import { formatDailyStatus } from '../alerts/alert-format';
 import { TradingStateService } from '../risk/trading-state.service';
+import { calendarExpiryWarning, effectiveSchedule } from '../v1/calendar/economic-calendar';
 import { scrubString } from './scrub';
 
 const NO_TRADE_ALERT_DAYS = 7;
@@ -12,7 +13,8 @@ const NO_TRADE_ALERT_DAYS = 7;
 /**
  * Daily Telegram reminder while the system is not trading: sent whenever any halt
  * is active or no trade has been placed in 7 days, so a stuck system cannot go
- * unnoticed once its one-off halt alert has scrolled away. Quiet otherwise.
+ * unnoticed once its one-off halt alert has scrolled away. A calendar about to run
+ * out sends it too, or a healthy system would never show the warning. Quiet otherwise.
  */
 @Injectable()
 export class DailyStatusService {
@@ -41,12 +43,14 @@ export class DailyStatusService {
         ? Math.floor((now.getTime() - new Date(lastTrade).getTime()) / 86400_000)
         : null;
       const noRecentTrade = daysSinceLastTrade === null || daysSinceLastTrade >= NO_TRADE_ALERT_DAYS;
-      if (!halts.length && !noRecentTrade) return;
+      const calendarWarning = calendarExpiryWarning(effectiveSchedule().events, now);
+      if (!halts.length && !noRecentTrade && !calendarWarning) return;
 
       await this.alerts.send(
         formatDailyStatus({
           halts: halts.map((h) => ({ haltType: h.halt_type, reason: h.reason && scrubString(h.reason) })),
           daysSinceLastTrade,
+          calendarWarning,
         }),
       );
     } catch (err) {
