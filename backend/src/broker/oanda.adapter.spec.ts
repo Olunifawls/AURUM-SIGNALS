@@ -27,6 +27,18 @@ describe('OandaAdapter', () => {
     expect(fetchMock.mock.calls[0][0]).not.toContain('api-fxtrade'); // never the live host
   });
 
+  it('getTrade returns the broker close time, normalised from OANDA nanoseconds', async () => {
+    fetchMock.mockResolvedValue(res(200, { trade: { id: '7', state: 'CLOSED', averageClosePrice: '2020', closeTime: '2026-07-17T15:03:12.123456789Z' } }));
+    expect((await new OandaAdapter().getTrade('7')).closeTime).toBe('2026-07-17T15:03:12.123Z');
+  });
+
+  it('getTrade returns a null close time for an open trade or an unreadable value', async () => {
+    fetchMock.mockResolvedValueOnce(res(200, { trade: { id: '7', state: 'OPEN' } }));
+    fetchMock.mockResolvedValueOnce(res(200, { trade: { id: '7', state: 'CLOSED', closeTime: 'not-a-date' } }));
+    expect((await new OandaAdapter().getTrade('7')).closeTime).toBeNull();
+    expect((await new OandaAdapter().getTrade('7')).closeTime).toBeNull();
+  });
+
   it('getAccount parses the summary', async () => {
     fetchMock.mockResolvedValue(res(200, { account: { id: '101-004-DEMO-001', currency: 'GBP', balance: '1000.50', NAV: '1005.25', unrealizedPL: '4.75', openTradeCount: 1, lastTransactionID: '42' } }));
     const a = await new OandaAdapter().getAccount();

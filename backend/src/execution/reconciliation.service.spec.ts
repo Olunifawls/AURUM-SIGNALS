@@ -54,6 +54,24 @@ describe('(b) RECONCILE-DETECTS-CLOSE (simulated)', () => {
   });
 });
 
+describe('exit time comes from the broker', () => {
+  const closed = (closeTime?: string | null) =>
+    makeAdapter({ getTrade: jest.fn(async () => ({ id: 'T1', state: 'CLOSED', instrument: 'XAU_USD', units: 2.8, price: 2000, closePrice: 2020, realizedPl: 56, closeTime })) });
+
+  it('stores the broker close time as closed_at, not the reconcile time', async () => {
+    const { client, updated } = makeSupabase([openPos]);
+    await new ReconciliationService(client, closed('2026-07-17T13:38:41.000Z'), new ExecutionReadinessService(), alerts, breaker).reconcile();
+    expect(updated.positions?.[0].closed_at).toBe('2026-07-17T13:38:41.000Z');
+  });
+
+  it('falls back to the reconcile time if the broker gives none', async () => {
+    const { client, updated } = makeSupabase([openPos]);
+    const before = Date.now();
+    await new ReconciliationService(client, closed(null), new ExecutionReadinessService(), alerts, breaker).reconcile();
+    expect(Date.parse(updated.positions?.[0].closed_at)).toBeGreaterThanOrEqual(before);
+  });
+});
+
 describe('close reason is classified against initial_stop_loss', () => {
   // Real trade from 2026-07-17: SELL, stop moved to entry-0.1, closed at breakeven.
   const moved = {

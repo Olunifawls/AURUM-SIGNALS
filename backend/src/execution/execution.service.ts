@@ -178,12 +178,14 @@ export class ExecutionService {
       if (!pos.opened_at || !isTimeStopped(pos.opened_at, now)) continue;
       const tradeId = pos.broker_trade_id as string | null;
       let closePrice = Number(pos.entry_price);
+      let closedAt = now.toISOString();
       if (tradeId) {
         const res = await this.broker.closeTrade(tradeId); // execution MAY close (time stop)
         void res;
         try {
           const t = await this.broker.getTrade(tradeId);
           closePrice = t.closePrice ?? closePrice;
+          closedAt = t.closeTime ?? closedAt;
         } catch {
           /* best-effort */
         }
@@ -192,7 +194,7 @@ export class ExecutionService {
       const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
       await this.supabase
         .from('positions')
-        .update({ status: 'CLOSED', close_reason: 'TIME_STOP', closed_at: now.toISOString(), close_price: closePrice, realized_r: rr, updated_at: now.toISOString() })
+        .update({ status: 'CLOSED', close_reason: 'TIME_STOP', closed_at: closedAt, close_price: closePrice, realized_r: rr, updated_at: now.toISOString() })
         .eq('id', pos.id);
       closed++;
       this.logger.log(`time-stop closed position ${pos.id}`);

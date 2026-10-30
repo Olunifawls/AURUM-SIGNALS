@@ -175,7 +175,7 @@ export class ExecutionReadService {
       await db.from('positions').update({
         status: 'CLOSED',
         close_reason: 'MANUAL',
-        closed_at: now,
+        closed_at: trade.closeTime ?? now,
         close_price: closePrice,
         realized_pl: realizedPl,
         realized_r: realizedR,

@@ -197,3 +197,19 @@ describe('pre-order gates: stale signals and price beyond the slippage limit', (
     expect(db.selects.signals).toContain('created_at');
   });
 });
+
+describe('time stop stores the broker close time', () => {
+  it('uses the close time from the broker as closed_at', async () => {
+    const OLD = { ...process.env };
+    process.env.OANDA_ACCOUNT_ID_DEMO = 'test-001';
+    const now = new Date('2026-07-20T12:00:00Z');
+    const position = { id: 'pos-1', broker_trade_id: 'T1', opened_at: '2026-07-06T12:00:00Z', entry_price: 2000, initial_stop_loss: 1990, stop_loss: 1990, side: 'BUY' };
+    const { client, updated } = makeSupabase({ positions: () => ({ data: [position] }) });
+    const broker = { closeTrade: jest.fn(async () => ({ closed: true })), getTrade: jest.fn(async () => ({ closePrice: 2005, closeTime: '2026-07-20T11:59:58.000Z' })) } as any;
+
+    await new ExecutionService(client, broker, makeRisk(), makePlacement(), ready(true)).checkTimeStops(now);
+
+    expect(updated.positions?.[0]).toMatchObject({ close_reason: 'TIME_STOP', closed_at: '2026-07-20T11:59:58.000Z' });
+    process.env = { ...OLD };
+  });
+});
