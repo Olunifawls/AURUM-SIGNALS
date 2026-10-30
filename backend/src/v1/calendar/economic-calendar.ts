@@ -1,5 +1,6 @@
 import { LONDON, NEW_YORK, zonedParts, zonedTimeToUtc } from '../../common/timezone';
 import { NEWS_EVENTS } from '../../risk/news-events';
+import { CALENDAR_WARNING_DAYS, DAY_MS } from '../v1.constants';
 import { CALENDAR_COVERAGE_END, EventName, STATIC_RELEASES } from './economic-calendar.data';
 
 export { CALENDAR_COVERAGE_END } from './economic-calendar.data';
@@ -90,6 +91,25 @@ export function mergeSchedules(
     events: [...events.values()].flat().sort((a, b) => a.at.localeCompare(b.at)),
     disagreements,
   };
+}
+
+/**
+ * True when no event remains after `now`. Quiet weeks are normal, with gaps of up to
+ * 23 days between releases, so only a calendar that has run out counts.
+ */
+export function isCalendarExhausted(events: EconomicEvent[], now: Date): boolean {
+  return !events.some((e) => Date.parse(e.at) > now.getTime());
+}
+
+/** A warning once the last event is under 60 days away, else null. */
+export function calendarExpiryWarning(events: EconomicEvent[], now: Date): string | null {
+  const last = events.reduce<string | null>((max, e) => (!max || e.at > max ? e.at : max), null);
+  const daysLeft = last ? (Date.parse(last) - now.getTime()) / DAY_MS : -1;
+  if (daysLeft >= CALENDAR_WARNING_DAYS) return null;
+  const day = last?.slice(0, 10) ?? 'unknown';
+  return daysLeft > 0
+    ? `⚠️ Economic calendar: last event is ${day}, ${Math.ceil(daysLeft)} days away. Add the new BLS and Fed dates.`
+    : `⚠️ Economic calendar has run out (last event ${day}). Entries are blocked until new dates are added.`;
 }
 
 export function effectiveSchedule(): { events: EconomicEvent[]; disagreements: CalendarDisagreement[]; coverageEnd: string } {

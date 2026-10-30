@@ -1,5 +1,5 @@
-import { isNfpBlackout } from '../../risk/news';
-import { effectiveSchedule, firstFridayNfp, liveSourceEvents, mergeSchedules, staticEvents } from './economic-calendar';
+import { LONDON, zonedParts } from '../../common/timezone';
+import { calendarExpiryWarning, effectiveSchedule, firstFridayNfp, liveSourceEvents, mergeSchedules, staticEvents } from './economic-calendar';
 
 const at = (name: string, iso: string) => ({ name, tier: name === 'PPI' ? 2 : 1, at: iso }) as any;
 
@@ -30,9 +30,10 @@ describe('static schedule', () => {
 });
 
 describe('existing news source', () => {
-  it('reproduces the first-Friday NFP rule of risk/news.ts', () => {
+  it('keeps the first-Friday NFP rule: first Friday, 13:30 UK', () => {
     for (const e of liveSourceEvents().filter((x) => x.name === 'NFP')) {
-      expect(isNfpBlackout(new Date(e.at))).toBe(true);
+      expect(zonedParts(new Date(e.at), LONDON)).toMatchObject({ weekday: 5, hour: 13, minute: 30 });
+      expect(zonedParts(new Date(e.at), LONDON).day).toBeLessThanOrEqual(7);
     }
   });
 
@@ -103,5 +104,33 @@ describe('effectiveSchedule', () => {
   it('is sorted', () => {
     const times = events.map((e) => e.at);
     expect(times).toEqual([...times].sort());
+  });
+});
+
+describe('calendarExpiryWarning', () => {
+  const events = [at('CPI', '2026-11-10T13:30:00.000Z'), at('PPI', '2027-03-12T13:30:00.000Z')];
+  const before = (days: number) => new Date(Date.parse('2027-03-12T13:30:00.000Z') - days * 86_400_000);
+
+  it('is silent at exactly 60 days', () => {
+    expect(calendarExpiryWarning(events, before(60))).toBeNull();
+  });
+
+  it('warns under 60 days, naming the last event', () => {
+    const w = calendarExpiryWarning(events, before(59));
+    expect(w).toContain('2027-03-12');
+    expect(w).toContain('59 days');
+  });
+
+  it('says so when the calendar has run out, or is empty', () => {
+    expect(calendarExpiryWarning(events, before(-1))).toContain('run out');
+    expect(calendarExpiryWarning([], before(0))).toContain('run out');
+  });
+
+  it('is silent today, and first warns 60 days before the real last event', () => {
+    const { events: real } = effectiveSchedule();
+    expect(real[real.length - 1].at).toBe('2027-12-15T13:30:00.000Z');
+    expect(calendarExpiryWarning(real, new Date('2026-11-01T00:00:00Z'))).toBeNull();
+    expect(calendarExpiryWarning(real, new Date('2027-10-16T13:30:00Z'))).toBeNull();
+    expect(calendarExpiryWarning(real, new Date('2027-10-17T00:00:00Z'))).toContain('2027-12-15');
   });
 });

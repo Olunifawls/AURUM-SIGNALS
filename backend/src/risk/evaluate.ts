@@ -71,6 +71,8 @@ export function evaluateOrder(intent: OrderIntent, ctx: RiskContext): Decision {
     });
   }
   if (ctx.news.inBlackout) return reject('NEWS_BLACKOUT', 'high-impact USD news blackout window');
+  // Fail closed: with no events left, a clear blackout check proves nothing.
+  if (ctx.news.exhausted) return reject('NEWS_BLACKOUT', 'economic calendar has no upcoming events; entries blocked', { calendarExhausted: true });
 
   // 4a) volatility cooldown (read-only flag; trigger logic is INC-4)
   if (ctx.volatilityCooldown) return reject('VOLATILITY_COOLDOWN', 'volatility cooldown active');
