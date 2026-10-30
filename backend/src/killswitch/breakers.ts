@@ -22,6 +22,16 @@ export function isInReopenGrace(marketReopenTs: number | null, now: Date): boole
   return now.getTime() - marketReopenTs < REOPEN_GRACE_MS;
 }
 
+/** A 15min move beyond this fraction of price is bad data, not volatility. Gold
+ *  at ~4000 would need a $200 move inside one bar; the largest genuine moves are
+ *  a fraction of that, while a zero or stale quote gives ~100%. */
+export const MAX_SANE_MOVE_FRACTION = 0.05;
+
+/** True when a price move is plausible relative to the reference price. */
+export function isSanePriceMove(move: number, price: number): boolean {
+  return price > 0 && Number.isFinite(move) && move <= price * MAX_SANE_MOVE_FRACTION;
+}
+
 /** §6 volatility cooldown: 15m range > 3×ATR14, OR 15m move > 2×hourly ATR, OR
  * spread > 2.5× its 24h average -> 2h cooldown (check 4a flag). */
 export function evalVolatility(i: {

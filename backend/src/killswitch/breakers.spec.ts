@@ -9,6 +9,7 @@ import {
   evalVolatility,
   evalWeeklyLoss,
   isInReopenGrace,
+  isSanePriceMove,
   nextUkMidnight,
   nextWeeklyOpen,
 } from './breakers';
@@ -119,5 +120,15 @@ describe('(b) reopen grace — suppresses false FEED_STALE on weekly reopen, pas
   it('isInReopenGrace: exactly expired is no longer in grace', () => {
     const reopenTs = reopenNow.getTime() - REOPEN_GRACE_MS; // exactly expired
     expect(isInReopenGrace(reopenTs, reopenNow)).toBe(false);
+  });
+});
+
+describe('isSanePriceMove', () => {
+  it('accepts moves up to 5% of price and rejects anything larger or unusable', () => {
+    expect(isSanePriceMove(200, 4000)).toBe(true);
+    expect(isSanePriceMove(200.01, 4000)).toBe(false);
+    expect(isSanePriceMove(4140.95, 4140.95)).toBe(false); // the 15 Oct zero quote
+    expect(isSanePriceMove(1, 0)).toBe(false);
+    expect(isSanePriceMove(NaN, 4000)).toBe(false);
   });
 });

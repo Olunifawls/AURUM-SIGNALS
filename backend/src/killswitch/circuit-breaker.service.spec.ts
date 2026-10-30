@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { CircuitBreakerService } from './circuit-breaker.service';
 
 const NOW = new Date('2026-07-09T12:00:00Z'); // Wednesday midday UTC (market open)
@@ -139,9 +140,8 @@ describe('(b) VOLATILITY COOLDOWN wiring — evalVolatility called with real inp
     const sb = makeSupabase({
       equity_snapshots: [{ equity: 10_000, high_water_mark: 10_000 }],
       candles: [
-        { timeframe: '15min', ts: RECENT_TS },
         // calm candle — spread alone fires this
-        { timeframe: '15min', open: 4100, high: 4105, low: 4100, close: 4103 },
+        { timeframe: '15min', ts: RECENT_TS, open: 4100, high: 4105, low: 4100, close: 4103 },
       ],
       indicator_snapshots: [
         { timeframe: '15min', atr_14: 5.2 },
@@ -185,6 +185,55 @@ describe('(b) VOLATILITY COOLDOWN wiring — evalVolatility called with real inp
 
     const vcCalls = (state.setHalt as jest.Mock).mock.calls.filter(([t]) => t === 'VOLATILITY_COOLDOWN');
     expect(vcCalls).toHaveLength(0);
+  });
+});
+
+describe('VOLATILITY COOLDOWN — bad price data is a warning, not a halt', () => {
+  const INDICATORS = [
+    { timeframe: '15min', atr_14: 5.2 },
+    { timeframe: '1h',    atr_14: 15.98 },
+    { timeframe: '1day',  atr_14: 94.7 },
+  ];
+  const run = async (close: number, bid: number, ask: number) => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const state = makeState();
+    const broker = makeBroker();
+    broker.getPricing = jest.fn(async () => ({ instrument: 'XAU/USD', bid, ask, spread: ask - bid, tradeable: true }));
+    const sb = makeSupabase({
+      equity_snapshots: [{ equity: 10_000, high_water_mark: 10_000 }],
+      candles: [{ timeframe: '15min', ts: RECENT_TS, open: close, high: close + 1, low: close - 1, close }],
+      indicator_snapshots: INDICATORS,
+      positions: [],
+    });
+    const svc = new CircuitBreakerService(sb, broker, state, alerts);
+    primeSession(svc);
+    for (let i = 0; i < 10; i++) (svc as any).spreadHistory.push(0.35);
+    await svc.runBreakers(NOW);
+    const messages = warn.mock.calls.map(([m]) => String(m));
+    warn.mockRestore();
+    return { state, svc, messages };
+  };
+
+  it('15 Oct case: an empty quote (bid=ask=0) logs a warning and sets no halt', async () => {
+    const { state, messages } = await run(4140.95, 0, 0);
+    expect(state.setHalt).not.toHaveBeenCalledWith('VOLATILITY_COOLDOWN', expect.anything());
+    expect(messages.some((m) => m.includes('bad price data'))).toBe(true);
+  });
+
+  it('a one-sided quote beyond the sanity bound sets no halt, including via the spread check', async () => {
+    const { state, messages } = await run(4140.95, 2000, 4141);
+    expect(state.setHalt).not.toHaveBeenCalledWith('VOLATILITY_COOLDOWN', expect.anything());
+    expect(messages.some((m) => m.includes('bad price data'))).toBe(true);
+  });
+
+  it('an empty quote does not drag down the rolling spread average', async () => {
+    const { svc } = await run(4140.95, 0, 0);
+    expect((svc as any).spreadHistory).toHaveLength(10);
+  });
+
+  it('a genuine large move inside the bound still halts', async () => {
+    const { state } = await run(4140.95, 4200, 4200.3);
+    expect(state.setHalt).toHaveBeenCalledWith('VOLATILITY_COOLDOWN', expect.anything());
   });
 });
 

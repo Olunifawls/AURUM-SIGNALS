@@ -20,6 +20,7 @@ import {
   evalVolatility,
   evalWeeklyLoss,
   isInReopenGrace,
+  isSanePriceMove,
 } from './breakers';
 import { scrubString } from './scrub';
 
@@ -150,10 +151,15 @@ export class CircuitBreakerService {
       const dailyPct = daily ? ((daily - account.equity) / daily) * 100 : 0;
       const weeklyPct = weekly ? ((weekly - account.equity) / weekly) * 100 : 0;
 
+      // The adapter reports an empty OANDA quote as bid=ask=0.
+      const quoteValid = pricing.bid > 0 && pricing.ask > 0;
+
       // Accumulate rolling 24h spread history for the spread spike check.
-      this.spreadHistory.push(pricing.spread);
-      if (this.spreadHistory.length > CircuitBreakerService.SPREAD_HISTORY_MAX) this.spreadHistory.shift();
-      const spread24hAvg = this.spreadHistory.reduce((a, b) => a + b, 0) / this.spreadHistory.length;
+      if (quoteValid) {
+        this.spreadHistory.push(pricing.spread);
+        if (this.spreadHistory.length > CircuitBreakerService.SPREAD_HISTORY_MAX) this.spreadHistory.shift();
+      }
+      const spread24hAvg = this.spreadHistory.reduce((a, b) => a + b, 0) / (this.spreadHistory.length || 1);
 
       // Read active halts once — used to skip re-triggering timed breakers.
       const activeHalts = await this.state.getActiveHalts(now);
@@ -188,12 +194,18 @@ export class CircuitBreakerService {
         if (c15 && atr15 !== null && atr1h !== null) {
           // priceMove15m: move since the last completed 15min bar's close (= current bar's move so far).
           const mid = (pricing.bid + pricing.ask) / 2;
+          const move = Math.abs(mid - c15.close);
+          // Bad quote: warn and drop the quote-based inputs. The candle range still counts.
+          const quoteUsable = quoteValid && isSanePriceMove(move, c15.close);
+          if (!quoteUsable) {
+            this.logger.warn(`volatility check: bad price data ignored (bid=${pricing.bid} ask=${pricing.ask} lastClose=${c15.close})`);
+          }
           const spec = evalVolatility({
             lastRange: c15.high - c15.low,
             atr14: atr15,
-            priceMove15m: Math.abs(mid - c15.close),
+            priceMove15m: quoteUsable ? move : 0,
             hourlyAtr: atr1h,
-            spread: pricing.spread,
+            spread: quoteUsable ? pricing.spread : 0,
             spread24hAvg,
             now,
           });
