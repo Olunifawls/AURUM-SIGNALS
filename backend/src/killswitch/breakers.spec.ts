@@ -52,6 +52,7 @@ describe('(a) circuit breakers — each fires and sets the correct halt', () => 
   it('4 consecutive SL hits -> manual halt', () => {
     expect(evalConsecutiveSl(['SL_HIT', 'SL_HIT', 'SL_HIT', 'SL_HIT'])?.type).toBe('CONSECUTIVE_SL');
     expect(evalConsecutiveSl(['SL_HIT', 'SL_HIT', 'TP_HIT', 'SL_HIT'])).toBeNull(); // broken streak
+    expect(evalConsecutiveSl(['SL_HIT', 'BREAKEVEN_STOP', 'SL_HIT', 'SL_HIT'])).toBeNull(); // breakeven is not an SL hit
   });
   it('data feed stale > 20 min -> auto-clear halt', () => {
     const stale = new Date(now.getTime() - 25 * 60_000).toISOString();

@@ -22,12 +22,22 @@ export function realizedR(entry: number, stopLoss: number, closePrice: number, s
   return Math.round((move / risk) * 100) / 100;
 }
 
-/** Infer why a broker-closed trade closed, from the close price vs SL/TP. */
-export function inferCloseReason(closePrice: number, stopLoss: number, takeProfit: number): string {
-  const span = Math.abs(takeProfit - stopLoss);
+/**
+ * Infer why a broker-closed trade closed, from the close price vs SL/TP. SL_HIT
+ * always means the ORIGINAL stop: pass the stop at entry as `initialStop`, and the
+ * stop in force at close as `currentStop` if it was moved (breakeven).
+ */
+export function inferCloseReason(
+  closePrice: number,
+  initialStop: number,
+  takeProfit: number,
+  currentStop: number = initialStop,
+): string {
+  const span = Math.abs(takeProfit - initialStop);
   const tol = Math.max(span * 0.02, 0.5); // 2% of the SL–TP span, min 0.5
   if (Math.abs(closePrice - takeProfit) <= tol) return 'TP_HIT';
-  if (Math.abs(closePrice - stopLoss) <= tol) return 'SL_HIT';
+  if (currentStop !== initialStop && Math.abs(closePrice - currentStop) <= tol) return 'BREAKEVEN_STOP';
+  if (Math.abs(closePrice - initialStop) <= tol) return 'SL_HIT';
   return 'CLOSED_AT_BROKER';
 }
 

@@ -54,6 +54,28 @@ describe('(b) RECONCILE-DETECTS-CLOSE (simulated)', () => {
   });
 });
 
+describe('close reason is classified against initial_stop_loss', () => {
+  // Real trade from 2026-07-17: SELL, stop moved to entry-0.1, closed at breakeven.
+  const moved = {
+    id: 'pos-1', broker_trade_id: 'T1', side: 'SELL', units: 2.8, entry_price: 3997.18,
+    initial_stop_loss: 4025.6406, stop_loss: 3997.08, take_profit: 3927.0438,
+  };
+  const closingAt = (closePrice: number) =>
+    makeAdapter({ getTrade: jest.fn(async () => ({ id: 'T1', state: 'CLOSED', instrument: 'XAU_USD', units: 2.8, price: 3997.18, closePrice, realizedPl: 1 })) });
+
+  it('a close at the moved stop is BREAKEVEN_STOP, not SL_HIT', async () => {
+    const { client, updated } = makeSupabase([moved]);
+    await new ReconciliationService(client, closingAt(3997.15), new ExecutionReadinessService(), alerts, breaker).reconcile();
+    expect(updated.positions?.[0].close_reason).toBe('BREAKEVEN_STOP');
+  });
+
+  it('a close at the original stop is still SL_HIT after the stop was moved', async () => {
+    const { client, updated } = makeSupabase([moved]);
+    await new ReconciliationService(client, closingAt(4025.64), new ExecutionReadinessService(), alerts, breaker).reconcile();
+    expect(updated.positions?.[0].close_reason).toBe('SL_HIT');
+  });
+});
+
 describe('(c) RECONCILIATION NEVER WRITES TO THE BROKER', () => {
   it('a reconcile pass makes zero place/close broker calls', async () => {
     const { client } = makeSupabase([openPos]);
