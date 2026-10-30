@@ -47,6 +47,8 @@ describe('AiSummaryService', () => {
     await expect(svc.summarise(pack)).resolves.toEqual({ text: 'Eligible BUY, stop 3990, target 4050.', model: 'claude-haiku-5-5' });
     const req = svc.create.mock.calls[0][0];
     expect(req.model).toBe('claude-haiku-5-5');
+    expect(req.output_config).toEqual({ effort: 'low' });
+    expect(req.max_tokens).toBe(4096);
     expect(req.messages[0].content).toBe(JSON.stringify(pack));
     expect(req.system).toContain('120 words');
     expect(req.system).toContain('only facts stated in the pack');

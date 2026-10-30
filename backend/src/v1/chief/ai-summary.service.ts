@@ -4,7 +4,7 @@ import { EvidencePack } from './chief-analyst';
 
 export const DEFAULT_ANALYST_MODEL = 'claude-haiku-5-5';
 const TIMEOUT_MS = 20_000;
-const MAX_TOKENS = 1024;
+const MAX_TOKENS = 4096; // thinking counts against this, and a truncated reply is discarded
 
 const SYSTEM_PROMPT = [
   'You summarise a gold trade evidence pack for its owner, in plain English, in about 120 words.',
@@ -48,6 +48,7 @@ export class AiSummaryService {
       const response = await this.client(apiKey).messages.create({
         model,
         max_tokens: MAX_TOKENS,
+        output_config: { effort: 'low' },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: JSON.stringify(pack) }],
       });

@@ -117,4 +117,33 @@ describe('(c) RECONCILIATION NEVER WRITES TO THE BROKER', () => {
     expect(inserted.positions?.[0]).toMatchObject({ broker_trade_id: 'T9', status: 'OPEN' });
     expect(adapter.closeTrade).not.toHaveBeenCalled();
   });
+
+  it('only closes a position still OPEN, so a faster closer keeps its reason', async () => {
+    const filters: any[][] = [];
+    const client = {
+      from: (table: string) => {
+        const b: any = {
+          select: () => b,
+          eq: () => b,
+          order: () => b,
+          limit: () => Promise.resolve({ data: [] }),
+          insert: () => ({ then: (r: any) => r({ error: null }) }),
+          update: () => {
+            const chain: any = {
+              eq: (...args: any[]) => {
+                if (table === 'positions') filters.push(args);
+                return chain;
+              },
+              then: (r: any) => r({ error: null }),
+            };
+            return chain;
+          },
+          then: (r: any) => r({ data: table === 'positions' ? [openPos] : [] }),
+        };
+        return b;
+      },
+    } as any;
+    await new ReconciliationService(client, makeAdapter(), new ExecutionReadinessService(), alerts, breaker).reconcile();
+    expect(filters).toEqual([['id', 'pos-1'], ['status', 'OPEN']]);
+  });
 });

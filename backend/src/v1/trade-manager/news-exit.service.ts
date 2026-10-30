@@ -23,8 +23,9 @@ export class NewsExitService {
     private readonly alerts: AlertsService,
   ) {}
 
-  /** Each tick re-reads OPEN positions, so one that failed to close is retried. */
-  @Cron('* * * * *')
+  /** Each tick re-reads OPEN positions, so one that failed to close is retried. Second
+   * 20: T-15 always lands on a reconcile minute, and reconcile must not race the close. */
+  @Cron('20 * * * * *')
   async tick(now: Date = new Date()): Promise<number> {
     if (!this.supabase || !process.env.OANDA_ACCOUNT_ID_DEMO) return 0;
     const event = dueTier1Event(this.schedule, now);
