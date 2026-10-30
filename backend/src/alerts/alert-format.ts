@@ -143,6 +143,22 @@ export function formatAdminError(source: string, message: string): string {
   return `🔴 ADMIN ALERT — ERROR in ${source}\n${message}`;
 }
 
+export function formatHaltAlert(haltType: string, reason: string): string {
+  return `🛑 HALT ${haltType}\n${reason}\nNew orders are blocked until this clears.`;
+}
+
+/** Daily status: active halts plus how long since the last trade. */
+export function formatDailyStatus(i: {
+  halts: Array<{ haltType: string; reason?: string }>;
+  daysSinceLastTrade: number | null;
+}): string {
+  const lines = ['📋 AURUM daily status'];
+  lines.push(i.halts.length ? `Active halts: ${i.halts.length}` : 'Active halts: none');
+  for (const h of i.halts) lines.push(`• ${h.haltType}: ${h.reason ?? 'no reason recorded'}`);
+  lines.push(i.daysSinceLastTrade === null ? 'Last trade: no trades recorded' : `Last trade: ${i.daysSinceLastTrade} days ago`);
+  return lines.join('\n');
+}
+
 export const HEARTBEAT_MESSAGE = '⚠️ DATA FEED DOWN — no successful ingestion in over 35 minutes.';
 // 35 min = 2 × 15-min bars + 5 min OANDA-latency margin. A single bar stored
 // 5 min late (normal OANDA behaviour) creates at most a 20-min close gap, well

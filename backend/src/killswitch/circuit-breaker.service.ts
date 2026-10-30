@@ -79,7 +79,7 @@ export class CircuitBreakerService {
         meta: { haltType: spec.type, scope: spec.scope, requiresManual: spec.requiresManual, clearsAt: spec.clearsAt ?? null },
       });
     }
-    void this.alerts.sendAdminError(`halt-${spec.type}`, scrubString(`🛑 HALT ${spec.type}: ${spec.reason}`)).catch(() => undefined);
+    void this.alerts.sendHaltAlert(spec.type, scrubString(spec.reason)).catch(() => undefined);
     this.logger.warn(scrubString(`halt set: ${spec.type} (${spec.reason})`));
   }
 

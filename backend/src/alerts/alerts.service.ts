@@ -14,6 +14,7 @@ import {
   HEARTBEAT_THRESHOLD_MIN,
   SAMPLE_ALERT_SIGNAL,
   formatAdminError,
+  formatHaltAlert,
   formatNewSignal,
   formatResolution,
   isFeedStale,
@@ -100,6 +101,11 @@ export class AlertsService {
   async sendAdminError(source: string, message: string): Promise<boolean> {
     if (!this.adminThrottle.allow(source)) return false;
     return this.send(formatAdminError(source, message));
+  }
+
+  /** Halt alert — not throttled: callers fire it only when a halt newly takes effect. */
+  async sendHaltAlert(haltType: string, reason: string): Promise<boolean> {
+    return this.send(formatHaltAlert(haltType, reason));
   }
 
   async sendTest(type: 'signal' | 'resolution' | 'admin' = 'signal'): Promise<{ sent: boolean; text: string }> {

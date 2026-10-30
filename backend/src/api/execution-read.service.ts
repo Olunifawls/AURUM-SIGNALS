@@ -4,6 +4,7 @@ import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 import { TradingStateService } from '../risk/trading-state.service';
 import { level2Config } from '../level2/level2.config';
+import { AlertsService } from '../alerts/alerts.service';
 
 const round = (n: number, dp = 2) => Math.round(n * 10 ** dp) / 10 ** dp;
 
@@ -17,6 +18,7 @@ export class ExecutionReadService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
     private readonly state: TradingStateService,
+    private readonly alerts: AlertsService,
   ) {}
 
   private db(): SupabaseClient {
@@ -133,7 +135,9 @@ export class ExecutionReadService {
 
   /** POST /halt — sets a MANUAL halt (mirrors Telegram /halt). No live switch exists. */
   async setManualHalt(): Promise<{ ok: true }> {
-    await this.state.setHalt('MANUAL_HALT', { requiresManual: true, reason: 'manual halt (Execution page)' });
+    const reason = 'manual halt (Execution page)';
+    await this.state.setHalt('MANUAL_HALT', { requiresManual: true, reason });
+    void this.alerts.sendHaltAlert('MANUAL_HALT', reason).catch(() => undefined);
     return { ok: true };
   }
 

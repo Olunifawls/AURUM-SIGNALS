@@ -72,7 +72,7 @@ function makeBroker(spreadOverride = 0.35, tradeable = true) {
   } as any;
 }
 
-const alerts = { sendAdminError: jest.fn(async () => true) } as any;
+const alerts = { sendHaltAlert: jest.fn(async () => true) } as any;
 
 // ─── VOLATILITY COOLDOWN ────────────────────────────────────────────────────
 
@@ -103,10 +103,7 @@ describe('(b) VOLATILITY COOLDOWN wiring — evalVolatility called with real inp
       'VOLATILITY_COOLDOWN',
       expect.objectContaining({ scope: 'NEW_ORDERS', requiresManual: false }),
     );
-    expect(alerts.sendAdminError).toHaveBeenCalledWith(
-      'halt-VOLATILITY_COOLDOWN',
-      expect.stringContaining('HALT VOLATILITY_COOLDOWN'),
-    );
+    expect(alerts.sendHaltAlert).toHaveBeenCalledWith('VOLATILITY_COOLDOWN', expect.stringContaining('range'));
   });
 
   it('does NOT fire when range is within 3×ATR14 threshold', async () => {
@@ -271,10 +268,7 @@ describe('(c) SESSION GAP wiring — evalSessionGap called with real inputs', ()
       'SESSION_GAP',
       expect.objectContaining({ scope: 'NEW_ORDERS', requiresManual: false }),
     );
-    expect(alerts.sendAdminError).toHaveBeenCalledWith(
-      'halt-SESSION_GAP',
-      expect.stringContaining('SESSION_GAP'),
-    );
+    expect(alerts.sendHaltAlert).toHaveBeenCalledWith('SESSION_GAP', expect.stringContaining('session gap'));
   });
 
   it('does NOT fire when gap is within 1.5×dailyATR', async () => {
@@ -554,14 +548,14 @@ describe('CONSECUTIVE_SL — only closes after the last resume count, active hal
 
   it('inserts no risk_event and re-sets nothing while the same halt is already active', async () => {
     const state = makeState({ activeHalts: [{ halt_type: 'CONSECUTIVE_SL', active: true, requires_manual: true }] });
-    const quietAlerts = { sendAdminError: jest.fn(async () => true) } as any;
+    const quietAlerts = { sendHaltAlert: jest.fn(async () => true) } as any;
     const sb = base(slHits(BEFORE), [{ halt_type: 'CONSECUTIVE_SL', active: true, cleared_at: null }]);
     const svc = new CircuitBreakerService(sb, makeBroker(), state, quietAlerts);
     primeSession(svc);
     await svc.runBreakers(NOW);
     expect(state.setHalt).not.toHaveBeenCalled();
     expect(sb.inserted.risk_events).toBeUndefined();
-    expect(quietAlerts.sendAdminError).not.toHaveBeenCalled();
+    expect(quietAlerts.sendHaltAlert).not.toHaveBeenCalled();
   });
 });
 
