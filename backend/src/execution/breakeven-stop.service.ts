@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
@@ -24,13 +24,18 @@ import { SYMBOL } from '../ingestion/ingestion.constants';
  * before the stop is moved).
  */
 @Injectable()
-export class BreakevenStopService {
+export class BreakevenStopService implements OnModuleInit {
   private readonly logger = new Logger('BreakevenStop');
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient | null,
     @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
   ) {}
+
+  /** The setting defaults to false when absent, so state what is actually running. */
+  onModuleInit(): void {
+    this.logger.log(`BREAKEVEN_STOP_ENABLED effective value: ${level2Config().breakevenStopEnabled}`);
+  }
 
   @Cron('*/5 * * * *')
   async checkBreakeven(now: Date = new Date()): Promise<number> {

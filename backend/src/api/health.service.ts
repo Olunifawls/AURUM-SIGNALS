@@ -5,6 +5,7 @@ import { FX_PAIR, SYMBOL, TIMEFRAMES } from '../ingestion/ingestion.constants';
 import { isGoldMarketOpen } from '../ingestion/market-hours';
 import { computeStale, STALE_THRESHOLD_MS } from '../ingestion/health-util';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { level2Config } from '../level2/level2.config';
 
 export interface ApiHealth {
   ts: string;
@@ -14,6 +15,7 @@ export interface ApiHealth {
   timeframes: Record<string, { lastIngestionTs: string | null }>;
   fx: { lastTs: string | null };
   sources: Record<string, { consecutiveErrors: number; circuitOpen: boolean }>;
+  breakevenStopEnabled: boolean;
 }
 
 /**
@@ -64,6 +66,7 @@ export class HealthService {
       timeframes,
       fx: { lastTs: fxData?.[0]?.ts ?? null },
       sources: this.ingestion.getHealth().sources,
+      breakevenStopEnabled: level2Config().breakevenStopEnabled,
     };
   }
 }
