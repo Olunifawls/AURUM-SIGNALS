@@ -8,7 +8,7 @@ import { RiskManagerService } from '../risk/risk-manager.service';
 import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { ExecutionReadinessService } from './readiness.service';
-import { achievedRr, actualRiskPctAtFill, isSignalStale, isTimeStopped, preTradeSlippage, realizedR, slippagePoints } from './exec-util';
+import { achievedRr, actualRiskPctAtFill, entryDrift, isSignalStale, isTimeStopped, realizedR, slippagePoints } from './exec-util';
 
 export interface SignalForExec {
   id: string;
@@ -83,12 +83,14 @@ export class ExecutionService {
     const s = decision.sizing;
 
     // Last gate before ordering: last to run, so it only logs for an otherwise-approved order.
-    const maxSlippage = level2Config().maxSlippagePoints;
+    // The limit scales with the signal's stop distance (ENTRY_DRIFT_MAX_R × 1R).
+    const entry = Number(sig.entry_price);
+    const maxDrift = level2Config().entryDriftMaxR * Math.abs(entry - Number(sig.stop_loss));
     const pricing = await this.broker.getPricing(OANDA_INSTR);
-    const slip = preTradeSlippage(sig.direction, Number(sig.entry_price), pricing.bid, pricing.ask);
-    if (slip > maxSlippage) {
-      await this.logRejectionOnce('SLIPPAGE_PRE_TRADE', sig, `price ${slip.toFixed(4)} from signal entry > ${maxSlippage}; not traded`, { entry: Number(sig.entry_price), bid: pricing.bid, ask: pricing.ask, slip, maxSlippage });
-      return { executed: false, reason: 'slippage_pre_trade' };
+    const drift = entryDrift(sig.direction, entry, pricing.bid, pricing.ask);
+    if (drift > maxDrift) {
+      await this.logRejectionOnce('ENTRY_DRIFT_EXCEEDED', sig, `price ${drift.toFixed(4)} from signal entry > ${maxDrift.toFixed(4)}; not traded`, { entry, bid: pricing.bid, ask: pricing.ask, drift, maxDrift });
+      return { executed: false, reason: 'entry_drift' };
     }
 
     const brokerAccountId = await this.brokerAccountId();

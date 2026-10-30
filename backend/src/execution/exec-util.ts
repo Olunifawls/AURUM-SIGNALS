@@ -19,7 +19,7 @@ export function isSignalStale(createdAt: string | undefined, timeframe: string, 
 }
 
 /** Distance from the signal's entry to the price this side would actually pay. */
-export function preTradeSlippage(side: Side, entry: number, bid: number, ask: number): number {
+export function entryDrift(side: Side, entry: number, bid: number, ask: number): number {
   return Math.abs((side === 'BUY' ? ask : bid) - entry);
 }
 

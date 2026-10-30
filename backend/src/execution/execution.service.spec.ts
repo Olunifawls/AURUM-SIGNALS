@@ -122,7 +122,7 @@ describe('(e) SLIPPAGE > max -> logged, order stands, RR recomputed', () => {
   });
 });
 
-describe('pre-order gates: stale signals and price beyond the slippage limit', () => {
+describe('pre-order gates: stale signals and entry drift', () => {
   const OLD = { ...process.env };
   beforeEach(() => { delete process.env.AUTO_TRADE_ENABLED; delete process.env.MAX_SLIPPAGE_POINTS; });
   afterEach(() => (process.env = { ...OLD }));
@@ -160,26 +160,46 @@ describe('pre-order gates: stale signals and price beyond the slippage limit', (
     expect(out).toMatchObject({ executed: false, reason: 'signal_stale' });
   });
 
-  it('rejects BEFORE ordering when the ask is beyond the limit on a BUY, and logs it', async () => {
-    const { out, placement, events } = await run(coreSignal, withBroker(2000.4, 2000.8));
-    expect(out).toMatchObject({ executed: false, reason: 'slippage_pre_trade' });
+  // coreSignal: entry 2000, stop 1991.6, so 1R = 8.4 and the default 0.1R limit = 0.84.
+  it('allows 0.09R of entry drift', async () => {
+    const { out, placement } = await run(coreSignal, withBroker(2000.4, 2000.756));
+    expect(out.executed).toBe(true);
+    expect(placement.placeForSignal).toHaveBeenCalled();
+  });
+
+  it('rejects 0.11R of entry drift BEFORE ordering, and logs it', async () => {
+    const { out, placement, events } = await run(coreSignal, withBroker(2000.6, 2000.924));
+    expect(out).toMatchObject({ executed: false, reason: 'entry_drift' });
     expect(placement.placeForSignal).not.toHaveBeenCalled();
-    expect(events[0]).toMatchObject({ event_type: 'SLIPPAGE_PRE_TRADE', signal_id: 'sig-1' });
+    expect(events[0]).toMatchObject({ event_type: 'ENTRY_DRIFT_EXCEEDED', signal_id: 'sig-1' });
   });
 
   it('uses the bid for a SELL', async () => {
     const sell = { ...coreSignal, direction: 'SELL' };
-    expect((await run(sell, withBroker(1999.2, 1999.6))).out.reason).toBe('slippage_pre_trade');
-    expect((await run(sell, withBroker(1999.6, 1999.9))).out.executed).toBe(true);
+    expect((await run(sell, withBroker(1999.076, 1999.3))).out.reason).toBe('entry_drift');
+    expect((await run(sell, withBroker(1999.244, 1999.5))).out.executed).toBe(true);
   });
 
-  it('allows an order with the price exactly at the limit', async () => {
-    expect((await run(coreSignal, withBroker(2000.2, 2000.5))).out.executed).toBe(true);
+  it('scales with the signal stop distance', async () => {
+    const wide = { ...coreSignal, stop_loss: 1960 }; // 1R = 40, limit 4
+    expect((await run(wide, withBroker(2003.5, 2003.9))).out.executed).toBe(true);
+    expect((await run(wide, withBroker(2003.9, 2004.1))).out.reason).toBe('entry_drift');
+  });
+
+  it('MAX_SLIPPAGE_POINTS no longer affects the gate', async () => {
+    process.env.MAX_SLIPPAGE_POINTS = '0.01';
+    expect((await run(coreSignal, withBroker(2000.4, 2000.756))).out.executed).toBe(true);
+  });
+
+  it('ENTRY_DRIFT_MAX_R overrides the default', async () => {
+    process.env.ENTRY_DRIFT_MAX_R = '0.2'; // limit 1.68
+    expect((await run(coreSignal, withBroker(2000.4, 2001.5))).out.executed).toBe(true);
+    delete process.env.ENTRY_DRIFT_MAX_R;
   });
 
   it('an empty quote is rejected, never ordered', async () => {
     const { out, placement } = await run(coreSignal, withBroker(0, 0));
-    expect(out.reason).toBe('slippage_pre_trade');
+    expect(out.reason).toBe('entry_drift');
     expect(placement.placeForSignal).not.toHaveBeenCalled();
   });
 
