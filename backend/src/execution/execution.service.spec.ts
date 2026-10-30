@@ -161,23 +161,38 @@ describe('pre-order gates: stale signals and entry drift', () => {
   });
 
   // coreSignal: entry 2000, stop 1991.6, so 1R = 8.4 and the default 0.1R limit = 0.84.
-  it('allows 0.09R of entry drift', async () => {
-    const { out, placement } = await run(coreSignal, withBroker(2000.4, 2000.756));
-    expect(out.executed).toBe(true);
-    expect(placement.placeForSignal).toHaveBeenCalled();
-  });
+  const sell = { ...coreSignal, direction: 'SELL', stop_loss: 2008.4, take_profit: 1983.2 };
 
-  it('rejects 0.11R of entry drift BEFORE ordering, and logs it', async () => {
-    const { out, placement, events } = await run(coreSignal, withBroker(2000.6, 2000.924));
-    expect(out).toMatchObject({ executed: false, reason: 'entry_drift' });
-    expect(placement.placeForSignal).not.toHaveBeenCalled();
-    expect(events[0]).toMatchObject({ event_type: 'ENTRY_DRIFT_EXCEEDED', signal_id: 'sig-1' });
-  });
+  describe.each([
+    ['BUY', coreSignal, { adverse009: [2000.4, 2000.756], adverse011: [2000.6, 2000.924], favourable05: [1995.5, 1995.8] }],
+    ['SELL', sell, { adverse009: [1999.244, 1999.5], adverse011: [1999.076, 1999.4], favourable05: [2004.2, 2004.5] }],
+  ])('%s one-sided drift', (_side, sig, q) => {
+    it('allows 0.09R of adverse drift', async () => {
+      const { out, placement } = await run(sig, withBroker(q.adverse009[0], q.adverse009[1]));
+      expect(out.executed).toBe(true);
+      expect(placement.placeForSignal).toHaveBeenCalled();
+    });
 
-  it('uses the bid for a SELL', async () => {
-    const sell = { ...coreSignal, direction: 'SELL' };
-    expect((await run(sell, withBroker(1999.076, 1999.3))).out.reason).toBe('entry_drift');
-    expect((await run(sell, withBroker(1999.244, 1999.5))).out.executed).toBe(true);
+    it('rejects 0.11R of adverse drift BEFORE ordering, and logs it', async () => {
+      const { out, placement, events } = await run(sig, withBroker(q.adverse011[0], q.adverse011[1]));
+      expect(out).toMatchObject({ executed: false, reason: 'entry_drift' });
+      expect(placement.placeForSignal).not.toHaveBeenCalled();
+      expect(events[0]).toMatchObject({ event_type: 'ENTRY_DRIFT_EXCEEDED', signal_id: 'sig-1' });
+    });
+
+    it('allows 0.5R of favourable drift', async () => {
+      const { out, placement, events } = await run(sig, withBroker(q.favourable05[0], q.favourable05[1]));
+      expect(out.executed).toBe(true);
+      expect(placement.placeForSignal).toHaveBeenCalled();
+      expect(events).toHaveLength(0);
+    });
+
+    it('an empty quote is not a better price: rejected, never ordered, and logged', async () => {
+      const { out, placement, events } = await run(sig, withBroker(0, 0));
+      expect(out).toMatchObject({ executed: false, reason: 'quote_unavailable' });
+      expect(placement.placeForSignal).not.toHaveBeenCalled();
+      expect(events[0]).toMatchObject({ event_type: 'ENTRY_QUOTE_UNAVAILABLE', signal_id: 'sig-1' });
+    });
   });
 
   it('scales with the signal stop distance', async () => {
@@ -195,12 +210,6 @@ describe('pre-order gates: stale signals and entry drift', () => {
     process.env.ENTRY_DRIFT_MAX_R = '0.2'; // limit 1.68
     expect((await run(coreSignal, withBroker(2000.4, 2001.5))).out.executed).toBe(true);
     delete process.env.ENTRY_DRIFT_MAX_R;
-  });
-
-  it('an empty quote is rejected, never ordered', async () => {
-    const { out, placement } = await run(coreSignal, withBroker(0, 0));
-    expect(out.reason).toBe('entry_drift');
-    expect(placement.placeForSignal).not.toHaveBeenCalled();
   });
 
   it('logs once per signal: the 2 minute poll retries it without another risk_event', async () => {

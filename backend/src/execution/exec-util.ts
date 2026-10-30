@@ -18,9 +18,10 @@ export function isSignalStale(createdAt: string | undefined, timeframe: string, 
   return now.getTime() - created > candleMs;
 }
 
-/** Distance from the signal's entry to the price this side would actually pay. */
-export function entryDrift(side: Side, entry: number, bid: number, ask: number): number {
-  return Math.abs((side === 'BUY' ? ask : bid) - entry);
+/** How much worse than the signal's entry this side would pay. Negative when the
+ * price is better than the entry. */
+export function adverseDrift(side: Side, entry: number, bid: number, ask: number): number {
+  return side === 'BUY' ? ask - entry : entry - bid;
 }
 
 /** Achieved RR from the actual fill: |tp - fill| / |fill - stop|. */
