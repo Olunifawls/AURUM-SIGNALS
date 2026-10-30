@@ -8,7 +8,7 @@ import { RiskManagerService } from '../risk/risk-manager.service';
 import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { ExecutionReadinessService } from './readiness.service';
-import { achievedRr, actualRiskPctAtFill, isTimeStopped, realizedR, slippagePoints } from './exec-util';
+import { achievedRr, actualRiskPctAtFill, isSignalStale, isTimeStopped, preTradeSlippage, realizedR, slippagePoints } from './exec-util';
 
 export interface SignalForExec {
   id: string;
@@ -19,6 +19,7 @@ export interface SignalForExec {
   take_profit: number | string;
   track: 'core' | 'experimental';
   status?: string;
+  created_at: string;
 }
 
 export interface ExecutionOutcome {
@@ -31,6 +32,7 @@ export interface ExecutionOutcome {
 }
 
 const CORE_TIMEFRAMES = new Set(['1h', '4h']);
+const OANDA_INSTR = 'XAU_USD';
 
 /**
  * Execution (Phase C). Consumes NEW CORE-track signals only (1h/4h; NEVER the
@@ -59,6 +61,13 @@ export class ExecutionService {
     // Startup-reconcile gate (D7/B6): no order until the first reconcile completes.
     if (!this.readiness.isReady()) return { executed: false, reason: 'reconcile_pending' };
 
+    // A signal left without an order (market closed, halted, risk rejected) stays
+    // OPEN and is re-polled every 2 min, so it must not be traded once it has aged out.
+    if (isSignalStale(sig.created_at, sig.timeframe, new Date())) {
+      await this.logRejectionOnce('SIGNAL_STALE', sig, `signal ${sig.id} (${sig.timeframe}) created ${sig.created_at} is older than one candle; not traded`, { createdAt: sig.created_at, timeframe: sig.timeframe });
+      return { executed: false, reason: 'signal_stale' };
+    }
+
     const intent = {
       signalId: sig.id,
       side: sig.direction,
@@ -72,6 +81,15 @@ export class ExecutionService {
       return { executed: false, reason: decision.reason };
     }
     const s = decision.sizing;
+
+    // Last gate before ordering: last to run, so it only logs for an otherwise-approved order.
+    const maxSlippage = level2Config().maxSlippagePoints;
+    const pricing = await this.broker.getPricing(OANDA_INSTR);
+    const slip = preTradeSlippage(sig.direction, Number(sig.entry_price), pricing.bid, pricing.ask);
+    if (slip > maxSlippage) {
+      await this.logRejectionOnce('SLIPPAGE_PRE_TRADE', sig, `price ${slip.toFixed(4)} from signal entry > ${maxSlippage}; not traded`, { entry: Number(sig.entry_price), bid: pricing.bid, ask: pricing.ask, slip, maxSlippage });
+      return { executed: false, reason: 'slippage_pre_trade' };
+    }
 
     const brokerAccountId = await this.brokerAccountId();
     const outcome = await this.placement.placeForSignal({
@@ -188,7 +206,7 @@ export class ExecutionService {
     if (!this.supabase || !this.readiness.isReady() || !level2Config().autoTradeEnabled) return;
     const { data: sigs } = await this.supabase
       .from('signals')
-      .select('id,timeframe,direction,entry_price,stop_loss,take_profit,track,status')
+      .select('id,timeframe,direction,entry_price,stop_loss,take_profit,track,status,created_at')
       .eq('symbol', SYMBOL)
       .eq('status', 'OPEN')
       .eq('track', 'core')
@@ -212,6 +230,14 @@ export class ExecutionService {
       .eq('mode', 'demo')
       .limit(1);
     return data?.[0]?.id ?? null;
+  }
+
+  /** Log a pre-order rejection once per signal, however many polls re-evaluate it. */
+  private async logRejectionOnce(eventType: string, sig: SignalForExec, message: string, meta: Record<string, unknown>): Promise<void> {
+    if (!this.supabase) return;
+    const { data } = await this.supabase.from('risk_events').select('id').eq('signal_id', sig.id).eq('event_type', eventType).limit(1);
+    if (data?.length) return;
+    await this.supabase.from('risk_events').insert({ mode: 'demo', event_type: eventType, severity: 'WARN', signal_id: sig.id, message, meta });
   }
 
   private async logRisk(eventType: string, message: string, meta: Record<string, unknown>): Promise<void> {

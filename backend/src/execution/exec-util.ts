@@ -7,6 +7,22 @@ export function slippagePoints(fillPrice: number, requestedPrice: number): numbe
   return Math.abs(fillPrice - requestedPrice);
 }
 
+const TIMEFRAME_MS: Record<string, number> = { '1h': 3600_000, '4h': 4 * 3600_000 };
+
+/** True if a signal is older than one candle of its timeframe. An unknown age
+ * counts as stale: the safe default for a gate in front of a live order. */
+export function isSignalStale(createdAt: string | undefined, timeframe: string, now: Date): boolean {
+  const candleMs = TIMEFRAME_MS[timeframe];
+  const created = Date.parse(createdAt ?? '');
+  if (!candleMs || !Number.isFinite(created)) return true;
+  return now.getTime() - created > candleMs;
+}
+
+/** Distance from the signal's entry to the price this side would actually pay. */
+export function preTradeSlippage(side: Side, entry: number, bid: number, ask: number): number {
+  return Math.abs((side === 'BUY' ? ask : bid) - entry);
+}
+
 /** Achieved RR from the actual fill: |tp - fill| / |fill - stop|. */
 export function achievedRr(fillPrice: number, stopLoss: number, takeProfit: number): number | null {
   const risk = Math.abs(fillPrice - stopLoss);
