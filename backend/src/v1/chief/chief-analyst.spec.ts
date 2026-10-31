@@ -1,5 +1,5 @@
 import { AgentResult, CotReport, DailyBar } from '../agents/types';
-import { AgentData, evaluateSignal, isEligible, SignalToEvaluate } from './chief-analyst';
+import { AgentData, evaluateSignal, isEligible, markDuplicate, SignalToEvaluate } from './chief-analyst';
 import { ChiefAnalystService } from './chief-analyst.service';
 
 const DAY = 86_400_000;
@@ -107,13 +107,46 @@ describe('evaluateSignal', () => {
   });
 });
 
+describe('markDuplicate', () => {
+  it('makes an otherwise eligible signal ineligible and leaves every verdict alone', () => {
+    const e = evaluateSignal(signal(), goodData(), NOW);
+    const d = markDuplicate(e, 'orig-1');
+    expect(e.eligible).toBe(true);
+    expect(d.eligible).toBe(false);
+    expect(d.duplicateOf).toBe('orig-1');
+    expect(d.agents).toEqual(e.agents);
+    expect(d.evidence).toMatchObject({ eligible: false, ineligibleReason: 'DUPLICATE', duplicateOf: 'orig-1' });
+    expect(d.evidence.caseAgainst[0]).toContain('DUPLICATE');
+  });
+
+  it('is off by default', () => {
+    expect(evaluateSignal(signal(), goodData(), NOW).duplicateOf).toBeNull();
+  });
+});
+
 describe('ChiefAnalystService', () => {
-  function makeDb(insertError: { message: string } | null = null) {
+  const stored = (id: string, created_at: string) => ({ id, symbol: 'XAU/USD', timeframe: '4h', direction: 'BUY', entry_price: 2000, stop_loss: 1990, take_profit: 2020, created_at });
+  const SELF = stored('sig-1', '2026-10-29T12:00:00Z');
+
+  function makeDb(insertError: { message: string } | null = null, signals: any[] = [SELF], signalsError: { message: string } | null = null) {
     const calls: string[] = [];
     const inserted: any[] = [];
     const updated: any[] = [];
+    const reads = () => {
+      let id: string | null = null;
+      const b: any = {
+        select: () => b,
+        eq: (column: string, value: string) => {
+          if (column === 'id') id = value;
+          return b;
+        },
+        limit: async () => ({ data: signals.filter((s) => s.id === id), error: signalsError }),
+        then: (r: any) => r({ data: signals, error: signalsError }),
+      };
+      return b;
+    };
     const client = {
-      from: () => ({
+      from: (table: string) => (table === 'signals' ? reads() : {
         insert: async (row: any) => {
           calls.push('insert');
           inserted.push(row);
@@ -162,6 +195,30 @@ describe('ChiefAnalystService', () => {
     expect(db.inserted[0]).toMatchObject({ signal_id: 'sig-1', ruleset_version: 'v1', eligible: true });
     expect(db.updated[0]).toEqual({ ai_summary: 'Summary.', ai_model: 'claude-haiku-5-5' });
     expect(r.aiSummary).toBe('Summary.');
+  });
+
+  it('stores a duplicate as ineligible with its original, and still evaluates every agent', async () => {
+    const db = makeDb(null, [stored('orig-1', '2026-10-29T10:00:00Z'), stored('second', '2026-10-29T11:00:00Z'), SELF]);
+    const ai = { summarise: jest.fn(async () => null) } as any;
+    const r = await new Instant(db.client, makeData(), ai, events()).evaluate('sig-1', signal(), clock);
+    expect(r.eligible).toBe(false);
+    expect(r.duplicateOf).toBe('orig-1');
+    expect(r.agents.filter((a) => a.hard).every((a) => a.verdict === 'PASS')).toBe(true);
+    expect(db.inserted[0]).toMatchObject({ signal_id: 'sig-1', eligible: false, duplicate_of: 'orig-1' });
+    expect(db.inserted[0].evidence.ineligibleReason).toBe('DUPLICATE');
+  });
+
+  it('stores the first signal of a setup as its own original', async () => {
+    const db = makeDb(null, [SELF, stored('later', '2026-10-29T13:00:00Z')]);
+    const r = await new Instant(db.client, makeData(), { summarise: async () => null } as any, events()).evaluate('sig-1', signal(), clock);
+    expect(r.eligible).toBe(true);
+    expect(db.inserted[0].duplicate_of).toBeNull();
+  });
+
+  it('stores nothing if the duplicate check cannot run, so the signal cannot execute', async () => {
+    const db = makeDb(null, [], { message: 'db down' });
+    await expect(new Instant(db.client, makeData(), { summarise: async () => null } as any, events()).evaluate('sig-1', signal(), clock)).rejects.toThrow('signal read failed');
+    expect(db.inserted).toHaveLength(0);
   });
 
   it('an AI failure does not block: same eligibility, no summary, stored', async () => {

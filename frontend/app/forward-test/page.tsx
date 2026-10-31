@@ -63,6 +63,14 @@ export default function ForwardTestPage() {
 
       {report && (
         <>
+          <section>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Stat label="Setups counted" value={String(report.setups)} />
+              <Stat label="Duplicates, not counted" value={String(report.duplicates)} className={report.duplicates > 0 ? 'text-amber-400' : ''} />
+            </div>
+            <p className="mt-1 text-xs text-neutral-600">A duplicate repeats an earlier setup: same timeframe, direction, entry, stop and target. Each setup counts once, here and in every total below.</p>
+          </section>
+
           <section className="grid gap-4 md:grid-cols-2">
             <CurvePanel title="Kept by v1" group={report.kept} />
             <CurvePanel title="Vetoed by v1" group={report.vetoed} />
@@ -157,7 +165,11 @@ export default function ForwardTestPage() {
               {report.recent.map((r) => (
                 <div key={r.signalId} className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3 text-sm">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className={r.eligible ? 'font-semibold text-green-400' : 'font-semibold text-red-400'}>{r.eligible ? 'ELIGIBLE' : 'VETOED'}</span>
+                    {r.duplicateOf ? (
+                      <span className="font-semibold text-amber-400">DUPLICATE</span>
+                    ) : (
+                      <span className={r.eligible ? 'font-semibold text-green-400' : 'font-semibold text-red-400'}>{r.eligible ? 'ELIGIBLE' : 'VETOED'}</span>
+                    )}
                     <span>{r.timeframe}</span>
                     <span className="text-neutral-500">{relTime(r.createdAt)}</span>
                     <span className="text-neutral-500">{r.status}</span>

@@ -31,7 +31,7 @@ export class ForwardTestService {
     const [evaluations, positions, watch] = await Promise.all([
       this.all<any>(
         'signal_evaluations',
-        'signal_id,eligible,agents,ai_summary,signals(timeframe,created_at,status,entry_price,stop_loss,pips_result,resolved_at,resolved_price)',
+        'signal_id,eligible,duplicate_of,agents,ai_summary,signals(timeframe,created_at,status,entry_price,stop_loss,pips_result,resolved_at,resolved_price)',
         (q) => q.eq('ruleset_version', RULESET_VERSION),
       ),
       this.all<any>('positions', 'id,signal_id,side,entry_price,stop_loss,initial_stop_loss,realized_r,close_reason,closed_at,status,meta'),
@@ -47,6 +47,7 @@ export class ForwardTestService {
         timeframe: s.timeframe,
         createdAt: s.created_at,
         eligible: e.eligible,
+        duplicateOf: e.duplicate_of ?? null,
         agents: e.agents ?? [],
         rMultiple: s.resolved_at != null && s.pips_result != null && risk > 0 ? Number(s.pips_result) / risk : null,
         resolvedAt: s.resolved_at ?? null,
@@ -99,6 +100,7 @@ export class ForwardTestService {
         createdAt: e.signals?.created_at,
         status: e.signals?.status,
         eligible: e.eligible,
+        duplicateOf: e.duplicate_of ?? null,
         agents: (e.agents ?? []).map((a: any) => ({ agent: a.agent, verdict: a.verdict, hard: a.hard })),
         aiSummary: e.ai_summary ?? null,
       }));

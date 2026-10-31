@@ -7,13 +7,15 @@ import { effectiveSchedule } from '../calendar/economic-calendar';
 import { MacroInstrument, V1DataService } from '../data/v1-data.service';
 import { DAY_MS } from '../v1.constants';
 import { AiSummaryService } from './ai-summary.service';
-import { AgentData, Evaluation, evaluateSignal, SignalToEvaluate } from './chief-analyst';
+import { AgentData, Evaluation, evaluateSignal, markDuplicate, SignalToEvaluate } from './chief-analyst';
+import { findOriginal, SetupRow } from './duplicate';
 
 const EVENT_SOURCE = 'chief-analyst';
 /** OANDA can flag the daily bar complete a few seconds after 00:00 UTC, when a 4h
  * signal may also fire. Wait this long for it rather than judge on a bar-old view. */
 const BAR_WAIT_ATTEMPTS = 3;
 const BAR_WAIT_MS = 5_000;
+const SETUP_COLUMNS = 'id,symbol,timeframe,direction,entry_price,stop_loss,take_profit,created_at';
 
 export interface StoredEvaluation extends Evaluation {
   aiSummary: string | null;
@@ -38,12 +40,35 @@ export class ChiefAnalystService {
 
   async evaluate(signalId: string, signal: SignalToEvaluate, now: () => Date = () => new Date()): Promise<StoredEvaluation> {
     await this.refreshToLatestBar(now());
-    const evaluation = evaluateSignal(signal, await this.loadData(), now());
+    const judged = evaluateSignal(signal, await this.loadData(), now());
+    const originalId = await this.originalOf(signalId);
+    const evaluation = originalId ? markDuplicate(judged, originalId) : judged;
     await this.store(signalId, evaluation);
 
     const summary = await this.ai.summarise(evaluation.evidence);
     if (summary) await this.storeSummary(signalId, summary.text, summary.model);
     return { ...evaluation, aiSummary: summary?.text ?? null };
+  }
+
+  /** Compares stored rows, not the engine's unrounded levels. A failed read throws, so
+   * the signal has no evaluation and cannot execute. */
+  private async originalOf(signalId: string): Promise<string | null> {
+    if (!this.supabase) throw new Error('Supabase client not configured');
+    const { data: rows, error } = await this.supabase.from('signals').select(SETUP_COLUMNS).eq('id', signalId).limit(1);
+    if (error) throw new Error(`signal read failed: ${error.message}`);
+    const signal = rows?.[0] as SetupRow | undefined;
+    if (!signal) throw new Error(`signal ${signalId} not found`);
+    const { data: same, error: sameError } = await this.supabase
+      .from('signals')
+      .select(SETUP_COLUMNS)
+      .eq('symbol', signal.symbol)
+      .eq('timeframe', signal.timeframe)
+      .eq('direction', signal.direction)
+      .eq('entry_price', signal.entry_price)
+      .eq('stop_loss', signal.stop_loss)
+      .eq('take_profit', signal.take_profit);
+    if (sameError) throw new Error(`duplicate check failed: ${sameError.message}`);
+    return findOriginal(signal, (same ?? []) as SetupRow[]);
   }
 
   /** Fetch the newest bars, then re-check until the bar that just completed arrives. */
@@ -91,6 +116,7 @@ export class ChiefAnalystService {
       eligible: e.eligible,
       agents: e.agents,
       evidence: e.evidence,
+      duplicate_of: e.duplicateOf,
     });
     if (error) throw new Error(`signal_evaluations insert failed: ${error.message}`);
   }

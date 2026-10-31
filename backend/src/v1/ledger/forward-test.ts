@@ -5,6 +5,7 @@ export interface LedgerRow {
   timeframe: string;
   createdAt: string;
   eligible: boolean;
+  duplicateOf: string | null; // a repeat of an earlier setup; never counted as a setup
   agents: Array<{ agent: string; verdict: string }>;
   rMultiple: number | null; // L1 outcome; null while the signal is open
   resolvedAt: string | null;
@@ -118,12 +119,15 @@ function watchResults(rows: WatchRow[]) {
 }
 
 export function summarise(ledger: LedgerRow[], exits: NewsExitRow[], watch: WatchRow[]) {
-  const kept = ledger.filter((r) => r.eligible);
-  const vetoed = ledger.filter((r) => !r.eligible);
+  const setups = ledger.filter((r) => !r.duplicateOf);
+  const kept = setups.filter((r) => r.eligible);
+  const vetoed = setups.filter((r) => !r.eligible);
   return {
+    setups: setups.length,
+    duplicates: ledger.length - setups.length,
     kept: { ...group(kept), curve: curve(kept) },
     vetoed: { ...group(vetoed), curve: curve(vetoed) },
-    byVerdict: byVerdict(ledger),
+    byVerdict: byVerdict(setups),
     newsExits: newsExits(exits, watch.filter((w) => w.kind === 'NEWS_EXIT_SHADOW')),
     thesisWatch: watchResults(watch.filter((w) => w.kind === 'THESIS_CHECK' && w.flipped)),
     dollarShock: watchResults(watch.filter((w) => w.kind === 'DOLLAR_SHOCK')),

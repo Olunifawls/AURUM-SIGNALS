@@ -7,6 +7,7 @@ import { OrderPlacementService } from '../broker/order-placement.service';
 import { RiskManagerService } from '../risk/risk-manager.service';
 import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
+import { fourDp } from '../v1/chief/duplicate';
 import { ExecutionReadinessService } from './readiness.service';
 import { achievedRr, actualRiskPctAtFill, adverseDrift, isSignalStale, isTimeStopped, realizedR, slippagePoints } from './exec-util';
 
@@ -65,6 +66,10 @@ export class ExecutionService {
     // gates below run after it, unchanged. No evaluation means no order (fail closed).
     const veto = await this.v1Veto(sig);
     if (veto) return { executed: false, reason: veto };
+
+    // Backstop for a repeat the chief analyst did not catch: one trade per setup.
+    const taken = await this.setupAlreadyTaken(sig);
+    if (taken) return { executed: false, reason: taken };
 
     // A signal left without an order (market closed, halted, risk rejected) stays
     // OPEN and is re-polled every 2 min, so it must not be traded once it has aged out.
@@ -238,13 +243,44 @@ export class ExecutionService {
   /** Why V1 blocks this signal, or null if it is eligible. */
   private async v1Veto(sig: SignalForExec): Promise<string | null> {
     if (!this.supabase) return 'v1_evaluation_missing';
-    const { data, error } = await this.supabase.from('signal_evaluations').select('eligible,agents').eq('signal_id', sig.id).limit(1);
-    const row = data?.[0] as { eligible: boolean; agents: Array<{ agent: string; verdict: string; hard: boolean }> } | undefined;
+    const { data, error } = await this.supabase.from('signal_evaluations').select('eligible,duplicate_of,agents').eq('signal_id', sig.id).limit(1);
+    const row = data?.[0] as { eligible: boolean; duplicate_of?: string | null; agents: Array<{ agent: string; verdict: string; hard: boolean }> } | undefined;
     if (error || !row) return 'v1_evaluation_missing'; // also the normal state for a just-fired signal
+    if (row.duplicate_of) {
+      await this.logRejectionOnce('DUPLICATE_SETUP', sig, `signal ${sig.id} repeats setup ${row.duplicate_of}; not traded`, { duplicateOf: row.duplicate_of });
+      return 'duplicate_setup';
+    }
     if (row.eligible === true) return null;
     const blocked = (row.agents ?? []).filter((a) => a.hard && a.verdict !== 'PASS');
     await this.logRejectionOnce('V1_VETO', sig, `signal ${sig.id} vetoed by ${blocked.map((a) => `${a.agent} ${a.verdict}`).join(', ') || 'ruleset'}; not traded`, { blocked });
     return 'v1_veto';
+  }
+
+  /** Why this setup cannot be ordered: another signal of it has an order or a position.
+   * Null if it can. A failed read blocks the order. */
+  private async setupAlreadyTaken(sig: SignalForExec): Promise<string | null> {
+    if (!this.supabase) return 'duplicate_check_failed';
+    const { data: same, error } = await this.supabase
+      .from('signals')
+      .select('id')
+      .eq('symbol', SYMBOL)
+      .eq('timeframe', sig.timeframe)
+      .eq('direction', sig.direction)
+      .eq('entry_price', fourDp(sig.entry_price))
+      .eq('stop_loss', fourDp(sig.stop_loss))
+      .eq('take_profit', fourDp(sig.take_profit));
+    if (error) return 'duplicate_check_failed';
+    const others = (same ?? []).map((s) => s.id as string).filter((id) => id !== sig.id);
+    if (!others.length) return null;
+    const [orders, positions] = await Promise.all([
+      this.supabase.from('orders').select('signal_id').in('signal_id', others),
+      this.supabase.from('positions').select('signal_id').in('signal_id', others),
+    ]);
+    if (orders.error || positions.error) return 'duplicate_check_failed';
+    const holder = orders.data?.[0]?.signal_id ?? positions.data?.[0]?.signal_id;
+    if (!holder) return null;
+    await this.logRejectionOnce('DUPLICATE_SETUP', sig, `setup of signal ${sig.id} already traded by ${holder}; not traded`, { duplicateOf: holder });
+    return 'duplicate_setup';
   }
 
   private async brokerAccountId(): Promise<string | null> {

@@ -274,6 +274,16 @@ describe('V1 chief-analyst gate', () => {
     expect(events[0].message).not.toContain('regime');
   });
 
+  it('a signal marked as a duplicate stops before risk, with one DUPLICATE_SETUP event', async () => {
+    const { out, risk, placement, events } = await run({ data: [{ eligible: false, duplicate_of: 'orig-1', agents: [hard('regime', 'PASS')] }] });
+    expect(out).toEqual({ executed: false, reason: 'duplicate_setup' });
+    expect(risk.assess).not.toHaveBeenCalled();
+    expect(placement.placeForSignal).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ event_type: 'DUPLICATE_SETUP', signal_id: 'sig-1' });
+    expect(events[0].meta).toEqual({ duplicateOf: 'orig-1' });
+  });
+
   it('DATA_MISSING on a HARD agent blocks like a FAIL', async () => {
     const { out } = await run({ data: [{ eligible: false, agents: [hard('regime', 'DATA_MISSING')] }] });
     expect(out.reason).toBe('v1_veto');
@@ -303,5 +313,63 @@ describe('V1 chief-analyst gate', () => {
     const { out, risk } = await run({ data: [{ eligible: true, agents: [] }] }, { ...coreSignal, created_at: old });
     expect(out.reason).toBe('signal_stale');
     expect(risk.assess).not.toHaveBeenCalled();
+  });
+});
+
+describe('one trade per setup', () => {
+  const OLD = { ...process.env };
+  beforeEach(() => { delete process.env.AUTO_TRADE_ENABLED; });
+  afterEach(() => (process.env = { ...OLD }));
+
+  const sameSetup = (...ids: string[]) => () => ({ data: ids.map((id) => ({ id })) });
+  const run = async (handlers: Record<string, () => any>) => {
+    const db = makeSupabase({ broker_accounts: () => ({ data: [{ id: 'ba-1' }] }), ...handlers });
+    const risk = makeRisk();
+    const placement = makePlacement();
+    const out = await new ExecutionService(db.client, adapter, risk, placement, ready(true)).executeSignal(coreSignal);
+    return { out, risk, placement, events: db.inserted.risk_events ?? [] };
+  };
+
+  it('refuses a second order when another signal of the setup has an order, even if marked eligible', async () => {
+    const { out, risk, placement, events } = await run({ signals: sameSetup('sig-1', 'orig-1'), orders: () => ({ data: [{ signal_id: 'orig-1' }] }) });
+    expect(out).toEqual({ executed: false, reason: 'duplicate_setup' });
+    expect(risk.assess).not.toHaveBeenCalled();
+    expect(placement.placeForSignal).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ event_type: 'DUPLICATE_SETUP', signal_id: 'sig-1', meta: { duplicateOf: 'orig-1' } });
+  });
+
+  it('refuses when another signal of the setup has only a position', async () => {
+    const { out, placement } = await run({ signals: sameSetup('sig-1', 'orig-1'), positions: () => ({ data: [{ signal_id: 'orig-1' }] }) });
+    expect(out.reason).toBe('duplicate_setup');
+    expect(placement.placeForSignal).not.toHaveBeenCalled();
+  });
+
+  it('logs a blocked duplicate once, however many polls see it', async () => {
+    const { events } = await run({
+      signals: sameSetup('sig-1', 'orig-1'),
+      orders: () => ({ data: [{ signal_id: 'orig-1' }] }),
+      risk_events: () => ({ data: [{ id: 1 }] }),
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  it('places the order when no other signal of the setup has one', async () => {
+    const { out, placement } = await run({ signals: sameSetup('sig-1', 'orig-1') });
+    expect(out.executed).toBe(true);
+    expect(placement.placeForSignal).toHaveBeenCalled();
+  });
+
+  it('places the order for the only signal of a setup', async () => {
+    const { out } = await run({ signals: sameSetup('sig-1') });
+    expect(out.executed).toBe(true);
+  });
+
+  it('places no order if the check cannot run', async () => {
+    const bad = await run({ signals: () => ({ data: null, error: { message: 'down' } }) });
+    expect(bad.out).toEqual({ executed: false, reason: 'duplicate_check_failed' });
+    const badOrders = await run({ signals: sameSetup('sig-1', 'orig-1'), orders: () => ({ data: null, error: { message: 'down' } }) });
+    expect(badOrders.out).toEqual({ executed: false, reason: 'duplicate_check_failed' });
+    expect(badOrders.placement.placeForSignal).not.toHaveBeenCalled();
   });
 });

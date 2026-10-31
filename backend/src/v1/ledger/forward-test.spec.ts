@@ -6,6 +6,7 @@ const row = (over: Partial<LedgerRow>): LedgerRow => ({
   timeframe: '4h',
   createdAt: '2026-11-02T04:00:00Z',
   eligible: true,
+  duplicateOf: null,
   agents: [],
   rMultiple: null,
   resolvedAt: null,
@@ -13,6 +14,26 @@ const row = (over: Partial<LedgerRow>): LedgerRow => ({
 });
 
 describe('summarise', () => {
+  it('counts each setup once and reports duplicates separately', () => {
+    const verdict = [{ agent: 'sentiment', verdict: 'SUPPORT' }];
+    const r = summarise(
+      [
+        row({ agents: verdict, rMultiple: 2, resolvedAt: '2026-11-03T10:00:00Z' }),
+        row({ duplicateOf: 'a', eligible: false, agents: verdict, rMultiple: 2, resolvedAt: '2026-11-03T11:00:00Z' }),
+        row({ duplicateOf: 'a', eligible: false, agents: verdict, rMultiple: -1, resolvedAt: '2026-11-03T12:00:00Z' }),
+        row({ eligible: false, rMultiple: -1, resolvedAt: '2026-11-03T10:00:00Z' }),
+      ],
+      [],
+      [],
+    );
+    expect(r.setups).toBe(2);
+    expect(r.duplicates).toBe(2);
+    expect(r.kept).toMatchObject({ signals: 1, totalR: 2 });
+    expect(r.vetoed).toMatchObject({ signals: 1, totalR: -1 });
+    expect(r.kept.curve).toEqual([{ day: '2026-11-03', value: 2 }]);
+    expect(r.byVerdict).toEqual([{ agent: 'sentiment', verdict: 'SUPPORT', signals: 1, resolved: 1, wins: 1, losses: 0, totalR: 2 }]);
+  });
+
   it('splits kept from vetoed and tracks vetoed signals to outcome', () => {
     const r = summarise(
       [
@@ -109,7 +130,8 @@ describe('ForwardTestService', () => {
     expect(r.newsExitMode).toBe('SHADOW');
     expect(r.kept.signals).toBe(0);
     expect(r.newsExits.trades[0]).toMatchObject({ event: 'NFP', exitR: 0.5, holdR: 2 });
-    expect(r.recent[0]).toMatchObject({ signalId: 'sig-1', eligible: false });
+    expect(r.recent[0]).toMatchObject({ signalId: 'sig-1', eligible: false, duplicateOf: null });
+    expect(r).toMatchObject({ setups: 1, duplicates: 0 });
   });
 
   it('leaves R blank for a position with no recorded stop', async () => {
