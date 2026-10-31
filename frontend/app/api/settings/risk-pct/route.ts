@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { requireSession } from '../../../../lib/proxy-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,6 +11,8 @@ const BACKEND = process.env.BACKEND_URL || 'http://localhost:3001';
  * same-origin route; the admin token never ships to the client.
  */
 export async function POST(req: NextRequest) {
+  const denied = await requireSession();
+  if (denied) return denied;
   const token = process.env.ADMIN_API_TOKEN;
   if (!token) {
     return Response.json({ message: 'server is not configured with ADMIN_API_TOKEN' }, { status: 500 });
