@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { execGet } from '../../lib/api';
 import { fmtSignedR, relTime } from '../../lib/format';
-import { ForwardTestGroup, ForwardTestReport, ForwardTestWatch } from '../../lib/types';
+import { ForwardTestReport, ForwardTestSide, ForwardTestWatch, NonTradeableReason } from '../../lib/types';
 import CumulativeRChart from '../../components/CumulativeRChart';
 
 const MIN_SAMPLE = 30; // same rule as Performance: smaller groups are greyed
@@ -20,6 +20,13 @@ const AGENT_LABEL: Record<string, string> = {
 
 const COPY =
   'Every L1 signal, judged by ruleset v1 and tracked to its L1 outcome, including the ones v1 vetoed. Only HARD rules block or close a trade. Everything else is logged here to be proved or dropped on forward data.';
+
+const REFUSED_LABEL: Record<NonTradeableReason, string> = {
+  PAST_STOP: 'past stop',
+  PAST_TARGET: 'past target',
+  ENTRY_DRIFT: 'entry drift',
+  NO_FIRE_PRICE: 'no fire price',
+};
 
 function rColor(v: number | null | undefined) {
   if (v == null || v === 0) return 'text-neutral-300';
@@ -56,7 +63,9 @@ export default function ForwardTestPage() {
       <div>
         <h1 className="text-xl font-semibold">Forward Test — ruleset {report?.ruleset ?? 'v1'}</h1>
         <p className="mt-2 max-w-3xl text-sm text-neutral-400">{COPY}</p>
-        <p className="mt-1 text-xs text-neutral-500">Signal R is measured on feed prices, before broker spread and slippage.</p>
+        <p className="mt-1 text-xs text-neutral-500">
+          Headline R counts only signals the executor would have taken at the price when they fired, measured from that price. Signal R is before broker slippage; fire prices from candles are also before spread.
+        </p>
       </div>
 
       {failed && <p className="text-sm text-amber-400">Couldn&apos;t load the forward test. Retrying every minute.</p>}
@@ -64,11 +73,15 @@ export default function ForwardTestPage() {
       {report && (
         <>
           <section>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <Stat label="Setups counted" value={String(report.setups)} />
               <Stat label="Duplicates, not counted" value={String(report.duplicates)} className={report.duplicates > 0 ? 'text-amber-400' : ''} />
+              <Stat label="Non-tradeable, not in R" value={String(report.nonTradeable.total)} className={report.nonTradeable.total > 0 ? 'text-amber-400' : ''} />
             </div>
-            <p className="mt-1 text-xs text-neutral-600">A duplicate repeats an earlier setup: same timeframe, direction, entry, stop and target. Each setup counts once, here and in every total below.</p>
+            <p className="mt-1 text-xs text-neutral-600">
+              A duplicate repeats an earlier setup: same timeframe, direction, entry, stop and target. Each setup counts once, here and in every total below.
+              {refusedSummary(report) && ` Non-tradeable: ${refusedSummary(report)}.`}
+            </p>
           </section>
 
           <section className="grid gap-4 md:grid-cols-2">
@@ -112,7 +125,7 @@ export default function ForwardTestPage() {
                 </tbody>
               </table>
             </div>
-            <p className="mt-1 text-xs text-neutral-600">Greyed rows have fewer than {MIN_SAMPLE} resolved signals.</p>
+            <p className="mt-1 text-xs text-neutral-600">Tradeable signals at tradeable R. Greyed rows have fewer than {MIN_SAMPLE} resolved signals.</p>
           </section>
 
           <section>
@@ -170,6 +183,7 @@ export default function ForwardTestPage() {
                     ) : (
                       <span className={r.eligible ? 'font-semibold text-green-400' : 'font-semibold text-red-400'}>{r.eligible ? 'ELIGIBLE' : 'VETOED'}</span>
                     )}
+                    {r.nonTradeable && <span className="text-amber-400">NOT TRADEABLE: {REFUSED_LABEL[r.nonTradeable]}</span>}
                     <span>{r.timeframe}</span>
                     <span className="text-neutral-500">{relTime(r.createdAt)}</span>
                     <span className="text-neutral-500">{r.status}</span>
@@ -193,6 +207,13 @@ export default function ForwardTestPage() {
   );
 }
 
+function refusedSummary(report: ForwardTestReport): string {
+  return (Object.keys(REFUSED_LABEL) as NonTradeableReason[])
+    .filter((k) => report.nonTradeable.byReason[k])
+    .map((k) => `${report.nonTradeable.byReason[k]} ${REFUSED_LABEL[k]}`)
+    .join(', ');
+}
+
 function Heading({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-400">{children}</h2>;
 }
@@ -206,7 +227,7 @@ function Stat({ label, value, className = '' }: { label: string; value: string; 
   );
 }
 
-function CurvePanel({ title, group }: { title: string; group: ForwardTestGroup & { curve: Array<{ day: string; value: number }> } }) {
+function CurvePanel({ title, group }: { title: string; group: ForwardTestSide }) {
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
       <div className="flex items-baseline justify-between">
@@ -214,7 +235,10 @@ function CurvePanel({ title, group }: { title: string; group: ForwardTestGroup &
         <span className={`text-lg font-semibold tabular-nums ${rColor(group.totalR)}`}>{fmtSignedR(group.totalR)}</span>
       </div>
       <p className="mb-2 text-xs text-neutral-500">
-        {group.signals} signals, {group.resolved} resolved, {group.wins}W / {group.losses}L
+        {group.signals} tradeable, {group.resolved} resolved, {group.wins}W / {group.losses}L
+      </p>
+      <p className="mb-2 text-xs text-neutral-600">
+        Raw L1: {fmtSignedR(group.raw.totalR)} over {group.raw.signals} signals
       </p>
       <CumulativeRChart points={group.curve} />
     </div>

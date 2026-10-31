@@ -12,6 +12,8 @@ import { createClient } from '@supabase/supabase-js';
 import { OandaAdapter } from '../broker/oanda.adapter';
 import { AlertsService } from '../alerts/alerts.service';
 import { WeeklyReportService } from '../alerts/weekly-report.service';
+import { ForwardTestService } from '../v1/ledger/forward-test.service';
+import { WeeklySnapshotService } from '../v1/ledger/weekly-snapshot.service';
 import { TradingStateService } from '../risk/trading-state.service';
 import { TelegramCommandService } from './telegram-command.service';
 
@@ -24,8 +26,9 @@ async function main(): Promise<void> {
   });
   const adapter = new OandaAdapter();
   const alerts = new AlertsService(sb as never, adapter as never);
-  const weeklyReport = new WeeklyReportService(sb as never, adapter, alerts);
   const state = new TradingStateService(sb as never);
+  const snapshots = new WeeklySnapshotService(sb as never, adapter, new ForwardTestService(sb as never), state);
+  const weeklyReport = new WeeklyReportService(sb as never, alerts, snapshots);
   const cmd = new TelegramCommandService(sb as never, adapter, state, alerts, weeklyReport);
 
   const arg = process.argv[2] ?? '/status';

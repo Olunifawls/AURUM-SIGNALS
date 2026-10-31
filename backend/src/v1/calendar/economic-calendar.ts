@@ -101,9 +101,13 @@ export function isCalendarExhausted(events: EconomicEvent[], now: Date): boolean
   return !events.some((e) => Date.parse(e.at) > now.getTime());
 }
 
+export function lastEventAt(events: EconomicEvent[]): string | null {
+  return events.reduce<string | null>((max, e) => (!max || e.at > max ? e.at : max), null);
+}
+
 /** A warning once the last event is under 60 days away, else null. */
 export function calendarExpiryWarning(events: EconomicEvent[], now: Date): string | null {
-  const last = events.reduce<string | null>((max, e) => (!max || e.at > max ? e.at : max), null);
+  const last = lastEventAt(events);
   const daysLeft = last ? (Date.parse(last) - now.getTime()) / DAY_MS : -1;
   if (daysLeft >= CALENDAR_WARNING_DAYS) return null;
   const day = last?.slice(0, 10) ?? 'unknown';

@@ -9,7 +9,7 @@ import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { fourDp } from '../v1/chief/duplicate';
 import { ExecutionReadinessService } from './readiness.service';
-import { achievedRr, actualRiskPctAtFill, adverseDrift, isSignalStale, isTimeStopped, realizedR, slippagePoints } from './exec-util';
+import { achievedRr, actualRiskPctAtFill, entryDrift, entryPriceFault, isSignalStale, isTimeStopped, realizedR, slippagePoints } from './exec-util';
 
 export interface SignalForExec {
   id: string;
@@ -96,14 +96,20 @@ export class ExecutionService {
     // One-sided: only a worse price is limited, by ENTRY_DRIFT_MAX_R × 1R. The adapter
     // reports an empty quote as bid=ask=0, which must not read as a better price.
     const entry = Number(sig.entry_price);
-    const maxDrift = level2Config().entryDriftMaxR * Math.abs(entry - Number(sig.stop_loss));
+    const stop = Number(sig.stop_loss);
+    const target = Number(sig.take_profit);
     const pricing = await this.broker.getPricing(OANDA_INSTR);
     if (pricing.bid <= 0 || pricing.ask <= 0) {
       await this.logRejectionOnce('ENTRY_QUOTE_UNAVAILABLE', sig, 'no usable quote before ordering; not traded', { entry, bid: pricing.bid, ask: pricing.ask });
       return { executed: false, reason: 'quote_unavailable' };
     }
-    const drift = adverseDrift(sig.direction, entry, pricing.bid, pricing.ask);
-    if (drift > maxDrift) {
+    const fault = entryPriceFault(sig.direction, stop, target, pricing.bid, pricing.ask);
+    if (fault) {
+      await this.logRejectionOnce('INVALID_ENTRY_PRICE', sig, `price already ${fault === 'PAST_STOP' ? 'at or past the stop' : 'at or past the target'}; not traded`, { fault, stop, target, bid: pricing.bid, ask: pricing.ask });
+      return { executed: false, reason: 'invalid_entry_price' };
+    }
+    const { drift, maxDrift, exceeded } = entryDrift(sig.direction, entry, stop, pricing.bid, pricing.ask, level2Config().entryDriftMaxR);
+    if (exceeded) {
       await this.logRejectionOnce('ENTRY_DRIFT_EXCEEDED', sig, `price ${drift.toFixed(4)} worse than signal entry > ${maxDrift.toFixed(4)}; not traded`, { entry, bid: pricing.bid, ask: pricing.ask, drift, maxDrift });
       return { executed: false, reason: 'entry_drift' };
     }

@@ -316,6 +316,56 @@ describe('V1 chief-analyst gate', () => {
   });
 });
 
+describe('entry price validity', () => {
+  const OLD = { ...process.env };
+  beforeEach(() => { delete process.env.AUTO_TRADE_ENABLED; });
+  afterEach(() => (process.env = { ...OLD }));
+
+  // BUY 2000, stop 1991.6, target 2016.8. SELL 2000, stop 2008.4, target 1983.2.
+  const sell = { ...coreSignal, direction: 'SELL', stop_loss: 2008.4, take_profit: 1983.2 } as SignalForExec;
+  const run = async (sig: SignalForExec, bid: number, ask: number, handlers: Record<string, () => any> = {}) => {
+    const db = makeSupabase({ broker_accounts: () => ({ data: [{ id: 'ba-1' }] }), ...handlers });
+    const placement = makePlacement();
+    const broker = { ...adapter, getPricing: jest.fn(async () => quote(bid, ask)) };
+    const out = await new ExecutionService(db.client, broker, makeRisk(), placement, ready(true)).executeSignal(sig);
+    return { out, placement, events: db.inserted.risk_events ?? [] };
+  };
+
+  it.each([
+    ['BUY at the stop', coreSignal, 1991.4, 1991.6, 'PAST_STOP'],
+    ['BUY past the stop', coreSignal, 1980, 1980.2, 'PAST_STOP'],
+    ['BUY at the target', coreSignal, 2016.6, 2016.8, 'PAST_TARGET'],
+    ['BUY past the target', coreSignal, 2030, 2030.2, 'PAST_TARGET'],
+    ['SELL at the stop', sell, 2008.4, 2008.6, 'PAST_STOP'],
+    ['SELL past the stop', sell, 2020, 2020.2, 'PAST_STOP'],
+    ['SELL at the target', sell, 1983.2, 1983.4, 'PAST_TARGET'],
+    ['SELL past the target', sell, 1970, 1970.2, 'PAST_TARGET'],
+  ])('refuses %s and logs INVALID_ENTRY_PRICE', async (_label, sig, bid, ask, fault) => {
+    const { out, placement, events } = await run(sig, bid, ask);
+    expect(out).toEqual({ executed: false, reason: 'invalid_entry_price' });
+    expect(placement.placeForSignal).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ event_type: 'INVALID_ENTRY_PRICE', signal_id: 'sig-1', meta: { fault } });
+  });
+
+  it('logs once, however many polls see the signal', async () => {
+    const { events } = await run(coreSignal, 1980, 1980.2, { risk_events: () => ({ data: [{ id: 1 }] }) });
+    expect(events).toHaveLength(0);
+  });
+
+  it('a price between the stop and entry is still traded', async () => {
+    const { out, placement } = await run(coreSignal, 1995, 1995.2);
+    expect(out.executed).toBe(true);
+    expect(placement.placeForSignal).toHaveBeenCalled();
+  });
+
+  it('drift short of the target still reports as drift', async () => {
+    const { out, events } = await run(coreSignal, 2005, 2005.2);
+    expect(out.reason).toBe('entry_drift');
+    expect(events[0].event_type).toBe('ENTRY_DRIFT_EXCEEDED');
+  });
+});
+
 describe('one trade per setup', () => {
   const OLD = { ...process.env };
   beforeEach(() => { delete process.env.AUTO_TRADE_ENABLED; });

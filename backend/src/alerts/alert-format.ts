@@ -131,13 +131,21 @@ const AGENT_LABEL: Record<string, string> = {
   news: 'News',
 };
 
-/** The V1 verdict block: the overall decision, then one line per agent. */
+function utcStamp(iso: string): string {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('en-GB', { timeZone: 'UTC', day: '2-digit', month: 'short' });
+  return `${day} ${d.toISOString().slice(11, 16)} UTC`;
+}
+
+/** The V1 verdict block: the overall decision, then one line per agent. A duplicate
+ * passes `duplicateOfAt`, the time of the original signal. */
 export function formatVerdictLines(
   eligible: boolean,
   agents: Array<{ agent: string; verdict: string; hard: boolean }>,
+  duplicateOfAt?: string | null,
 ): string[] {
   return [
-    `V1: ${eligible ? 'ELIGIBLE' : 'VETOED'}`,
+    duplicateOfAt ? `V1: DUPLICATE of the ${utcStamp(duplicateOfAt)} signal — not traded` : `V1: ${eligible ? 'ELIGIBLE' : 'VETOED'}`,
     ...agents.map((a) => `${AGENT_LABEL[a.agent] ?? a.agent}: ${a.verdict}${a.hard ? '' : ' (shadow)'}`),
   ];
 }

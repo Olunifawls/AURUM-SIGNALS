@@ -24,6 +24,20 @@ export function adverseDrift(side: Side, entry: number, bid: number, ask: number
   return side === 'BUY' ? ask - entry : entry - bid;
 }
 
+/** Whether this price already sits at or past the stop or target, which leaves no
+ * trade to enter. BUY pays the ask, SELL hits the bid. */
+export function entryPriceFault(side: Side, stop: number, target: number, bid: number, ask: number): 'PAST_STOP' | 'PAST_TARGET' | null {
+  if (side === 'BUY') return ask <= stop ? 'PAST_STOP' : ask >= target ? 'PAST_TARGET' : null;
+  return bid >= stop ? 'PAST_STOP' : bid <= target ? 'PAST_TARGET' : null;
+}
+
+/** Adverse drift against its limit of maxDriftR × 1R. One-sided: a better price passes. */
+export function entryDrift(side: Side, entry: number, stop: number, bid: number, ask: number, maxDriftR: number) {
+  const drift = adverseDrift(side, entry, bid, ask);
+  const maxDrift = maxDriftR * Math.abs(entry - stop);
+  return { drift, maxDrift, exceeded: drift > maxDrift };
+}
+
 /** Achieved RR from the actual fill: |tp - fill| / |fill - stop|. */
 export function achievedRr(fillPrice: number, stopLoss: number, takeProfit: number): number | null {
   const risk = Math.abs(fillPrice - stopLoss);

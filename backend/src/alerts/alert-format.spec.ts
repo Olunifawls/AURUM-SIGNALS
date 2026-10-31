@@ -146,3 +146,19 @@ describe('V1 verdict lines', () => {
     expect(formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts: undefined, aiSummary: undefined })).toBe(formatNewSignal(SAMPLE_ALERT_SIGNAL));
   });
 });
+
+describe('duplicate verdict line', () => {
+  const agents = [{ agent: 'regime', verdict: 'PASS', hard: true }];
+
+  it('names the original signal and that it is not traded', () => {
+    const lines = formatVerdictLines(false, agents, '2026-10-30T14:03:06.000Z');
+    expect(lines[0]).toBe('V1: DUPLICATE of the 30 Oct 14:03 UTC signal — not traded');
+    expect(lines).toContain('Regime: PASS');
+    expect(lines.join('\n')).not.toContain('VETOED');
+  });
+
+  it('leaves other signals alone', () => {
+    expect(formatVerdictLines(false, agents)[0]).toBe('V1: VETOED');
+    expect(formatVerdictLines(true, agents, null)[0]).toBe('V1: ELIGIBLE');
+  });
+});

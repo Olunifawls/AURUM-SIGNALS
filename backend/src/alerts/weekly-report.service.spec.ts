@@ -1,134 +1,111 @@
+import { SCHEDULE_CRON_OPTIONS } from '@nestjs/schedule/dist/schedule.constants';
+import { CronJob } from 'cron';
 import { WeeklyReportService } from './weekly-report.service';
 
-const NOW = new Date('2026-07-06T18:00:00Z'); // Sunday 18:00 UTC
+const payload = (over: any = {}) =>
+  ({
+    asOf: '2026-11-01T17:00:00.000Z',
+    ruleset: 'v1',
+    demoTrades: {
+      thisWeek: { count: 3, winRatePct: 66.7, totalR: 2.5, avgSlippagePoints: 0.12 },
+      sinceV1: { count: 3, winRatePct: 66.7, totalR: 2.5, avgSlippagePoints: 0.12 },
+    },
+    kept: { count: 2, resolved: 2, winRatePct: 50, totalR: 1 },
+    vetoed: { count: 5, resolved: 4, winRatePct: 25, totalR: -1 },
+    raw: { kept: { signals: 3, totalR: 3 }, vetoed: { signals: 6, totalR: -2 } },
+    newsExit: { settled: 0, exitR: 0, holdR: 0 },
+    thesisWatch: { events: 0, settled: 0, actedR: 0, heldR: 0 },
+    dollarShock: { events: 0, settled: 0, actedR: 0, heldR: 0 },
+    setups: 9,
+    duplicates: 3,
+    nonTradeable: { total: 2, byReason: {} },
+    activeHalts: [],
+    errorsThisWeek: 0,
+    gate: { weeksSinceV1: 1, weeksRequired: 8, demoTrades: 3, demoTradesRequired: 30 },
+    calendarDaysLeft: 100,
+    account: { ccy: 'GBP', equity: 2000, startOfWeekEquity: 1950, highWaterMark: 2050, openPositions: 0, maxDrawdownPct: 2.44 },
+    ...over,
+  }) as any;
 
-// Returns a Supabase mock that queues responses per table.
-// Each successive call to from(table) pops the next response in that table's queue.
-function makeSupabase(queues: Record<string, any[]> = {}) {
-  const callIdx: Record<string, number> = {};
-  const defaults: Record<string, any[]> = {
-    positions: [
-      // call 1: resolved trades this week
-      { data: [
-        { realized_r: 2.0, realized_pl: 180, side: 'BUY', mode: 'demo' },
-        { realized_r: -1.0, realized_pl: -90, side: 'SELL', mode: 'demo' },
-        { realized_r: 1.5, realized_pl: 130, side: 'BUY', mode: 'demo' },
-      ]},
-      // call 2: all-time count (head=true so .count not .data)
-      { data: null, count: 7 },
-      // call 3: open now
-      { data: [{ id: 'p1', side: 'BUY', mode: 'demo' }] },
-    ],
-    risk_events: [
-      { data: [
-        { event_type: 'TRADING_HALTED', message: 'FEED_STALE: stale', created_at: NOW.toISOString() },
-        { event_type: 'TRADING_HALTED', message: 'VOLATILITY_COOLDOWN: spike', created_at: NOW.toISOString() },
-      ]},
-    ],
-    equity_snapshots: [
-      // call 1: WEEKLY_REF
-      { data: [{ equity: 10000, ts: '2026-06-30T00:00:00Z' }] },
-      // call 2: HWM
-      { data: [{ high_water_mark: 10500 }] },
-    ],
-    signals: [
-      // call 1: this week (no .in filter)
-      { data: [{ id: 's1', status: 'OPEN' }, { id: 's2', status: 'HIT_TP' }] },
-      // call 2: all-time resolved (.in filter applied)
-      { data: [
-        { id: 'a1', status: 'HIT_TP' }, { id: 'a2', status: 'HIT_TP' },
-        { id: 'a3', status: 'HIT_SL' }, { id: 'a4', status: 'HIT_TP' },
-      ]},
-    ],
-    ...queues,
+const make = (latest: any = null) => {
+  const snapshots = {
+    write: jest.fn(async () => ({ createdAt: 'x', payload: payload() })),
+    build: jest.fn(async () => payload({ duplicates: 8 })),
+    latest: jest.fn(async () => latest),
+  };
+  const alerts = { send: jest.fn(async () => true) };
+  return { snapshots, alerts, svc: new WeeklyReportService({} as any, alerts as any, snapshots as any) };
+};
+
+describe('WeeklyReportService', () => {
+  it('writes one snapshot and sends that snapshot', async () => {
+    const { svc, snapshots, alerts } = make();
+    await svc.scheduledReport();
+    expect(snapshots.write).toHaveBeenCalledTimes(1);
+    expect(alerts.send).toHaveBeenCalledTimes(1);
+    expect((alerts.send.mock.calls as any)[0][0]).toContain('Setups 9, duplicates 3, non-tradeable 2');
+  });
+
+  it('sends nothing if the snapshot fails, and does not throw', async () => {
+    const { svc, snapshots, alerts } = make();
+    snapshots.write.mockRejectedValueOnce(new Error('db down'));
+    await expect(svc.scheduledReport()).resolves.toBeUndefined();
+    expect(alerts.send).not.toHaveBeenCalled();
+  });
+
+  it('/report shows the latest snapshot and writes nothing', async () => {
+    const { svc, snapshots } = make({ createdAt: 'x', payload: payload({ duplicates: 4 }) });
+    const text = await svc.buildReport(new Date());
+    expect(text).toContain('duplicates 4');
+    expect(snapshots.write).not.toHaveBeenCalled();
+    expect(snapshots.build).not.toHaveBeenCalled();
+  });
+
+  it('/report before the first snapshot says so and writes nothing', async () => {
+    const { svc, snapshots } = make();
+    const text = await svc.buildReport(new Date());
+    expect(text).toContain('No snapshot yet, live numbers');
+    expect(text).toContain('duplicates 8');
+    expect(snapshots.write).not.toHaveBeenCalled();
+  });
+
+  it('handles a missing database', async () => {
+    const svc = new WeeklyReportService(null, {} as any, {} as any);
+    await expect(svc.buildReport(new Date())).resolves.toBe('(no database)');
+    await expect(svc.scheduledReport()).resolves.toBeUndefined();
+  });
+});
+
+describe('weekly cron', () => {
+  // The job the scheduler builds: CronJob(cronTime, onTick, onComplete, start, timeZone).
+  const opts = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, WeeklyReportService.prototype.scheduledReport);
+  const next = (from: string) => {
+    jest.useFakeTimers({ now: new Date(from) });
+    try {
+      const job = new CronJob(opts.cronTime, () => undefined, null, false, opts.timeZone);
+      return job.nextDate().toUTC().toISO({ suppressMilliseconds: true });
+    } finally {
+      jest.useRealTimers();
+    }
   };
 
-  const from = jest.fn().mockImplementation((table: string) => {
-    callIdx[table] = (callIdx[table] ?? 0);
-    const queue = defaults[table] ?? [{ data: [], count: 0 }];
-    const idx = callIdx[table]++;
-    const response = queue[idx] ?? queue[queue.length - 1] ?? { data: [], count: 0 };
-    const chain: any = {
-      select: () => chain,
-      eq: () => chain,
-      gte: () => chain,
-      in: () => chain,
-      order: () => chain,
-      limit: () => chain,
-      then: (resolve: (v: any) => any) => Promise.resolve(response).then(resolve),
-    };
-    return chain;
+  it('is declared for Sunday 17:00 Europe/London', () => {
+    expect(opts.cronTime).toBe('0 17 * * 0');
+    expect(opts.timeZone).toBe('Europe/London');
   });
 
-  return { from } as any;
-}
-
-const makeBroker = () => ({
-  getAccount: jest.fn().mockResolvedValue({ currency: 'GBP', equity: 10200, unrealizedPl: 45 }),
-});
-const makeAlerts = () => ({ send: jest.fn().mockResolvedValue(true) });
-
-describe('WeeklyReportService.buildReport', () => {
-  it('includes all required sections and correct trade stats', async () => {
-    const svc = new WeeklyReportService(makeSupabase() as any, makeBroker() as any, makeAlerts() as any);
-    const report = await svc.buildReport(NOW);
-
-    // Trade section
-    expect(report).toMatch(/Trades: 3/);
-    expect(report).toMatch(/Win \/ Loss \/ B\/E: 2 \/ 1 \/ 0/);
-    expect(report).toMatch(/Win rate: 66\.7%/);
-    expect(report).toMatch(/Cumulative R:/);
-    expect(report).toMatch(/Best:.*\+2\.00R/);
-    expect(report).toMatch(/Worst:.*-1\.00R/);
-
-    // P/L section
-    expect(report).toMatch(/Realized P\/L \(week\)/);
-    expect(report).toMatch(/Open positions: 1/);
-    expect(report).toMatch(/Unrealised P\/L.*\+45/);
-
-    // Equity section
-    expect(report).toMatch(/Start of week.*10000\.00 GBP/);
-    expect(report).toMatch(/Current.*10200\.00 GBP/);
-    expect(report).toMatch(/HWM.*10500\.00 GBP/);
-    expect(report).toMatch(/Max drawdown/);
-
-    // Kill-switch section
-    expect(report).toMatch(/FEED_STALE.*1×/);
-    expect(report).toMatch(/VOLATILITY_COOLDOWN.*1×/);
-    expect(report).toMatch(/Total: 2/);
-
-    // Go-live gate
-    expect(report).toMatch(/Resolved demo trades: 7 \/ 30/);
-
-    // L1 signals
-    expect(report).toMatch(/Signals this week: 2/);
-    expect(report).toMatch(/Win rate.*75\.0%.*3\/4/);
-
-    // Disclaimer
-    expect(report).toMatch(/Demo results only\. Not financial advice\./);
+  it('fires at 16:00 UTC in British Summer Time', () => {
+    expect(next('2026-07-01T00:00:00Z')).toBe('2026-07-05T16:00:00Z');
+    expect(next('2026-10-12T00:00:00Z')).toBe('2026-10-18T16:00:00Z'); // the last Sunday before the change
   });
 
-  it('handles empty week gracefully (no trades, no halts)', async () => {
-    const sb = makeSupabase({
-      positions: [
-        { data: [] },
-        { data: null, count: 0 },
-        { data: [] },
-      ],
-      risk_events: [{ data: [] }],
-      signals: [{ data: [] }, { data: [] }],
-    });
-    const svc = new WeeklyReportService(sb as any, makeBroker() as any, makeAlerts() as any);
-    const report = await svc.buildReport(NOW);
-    expect(report).toMatch(/Trades: 0/);
-    expect(report).toMatch(/None/);
-    expect(report).toMatch(/Signals this week: 0/);
-    expect(report).toMatch(/Demo results only/);
+  it('fires at 17:00 UTC from the Sunday the clocks go back', () => {
+    expect(next('2026-10-20T00:00:00Z')).toBe('2026-10-25T17:00:00Z');
+    expect(next('2026-10-26T00:00:00Z')).toBe('2026-11-01T17:00:00Z');
   });
 
-  it('handles null supabase gracefully', async () => {
-    const svc = new WeeklyReportService(null as any, makeBroker() as any, makeAlerts() as any);
-    const report = await svc.buildReport(NOW);
-    expect(report).toBe('(no database)');
+  it('fires at 16:00 UTC from the Sunday the clocks go forward', () => {
+    expect(next('2027-03-15T00:00:00Z')).toBe('2027-03-21T17:00:00Z');
+    expect(next('2027-03-22T00:00:00Z')).toBe('2027-03-28T16:00:00Z');
   });
 });
