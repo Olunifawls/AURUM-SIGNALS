@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { level2Config } from '../../level2/level2.config';
 import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { NEWS_EXIT_MODE, RULESET_VERSION } from '../v1.constants';
-import { LedgerRow, NewsExitRow, summarise, WatchRow } from './forward-test';
+import { FiredSignal, LedgerRow, NewsExitRow, nonTradeableReason, summarise, tradeableR, WatchRow } from './forward-test';
 
 const PAGE = 1000;
 
@@ -31,7 +32,7 @@ export class ForwardTestService {
     const [evaluations, positions, watch] = await Promise.all([
       this.all<any>(
         'signal_evaluations',
-        'signal_id,eligible,duplicate_of,agents,ai_summary,signals(timeframe,created_at,status,entry_price,stop_loss,pips_result,resolved_at,resolved_price)',
+        'signal_id,eligible,duplicate_of,fire_price,agents,ai_summary,signals(timeframe,created_at,status,direction,entry_price,stop_loss,take_profit,pips_result,resolved_at,resolved_price)',
         (q) => q.eq('ruleset_version', RULESET_VERSION),
       ),
       this.all<any>('positions', 'id,signal_id,side,entry_price,stop_loss,initial_stop_loss,realized_r,close_reason,closed_at,status,meta'),
@@ -39,6 +40,14 @@ export class ForwardTestService {
     ]);
 
     const signals = new Map(evaluations.map((e) => [e.signal_id as string, e.signals]));
+    const maxDriftR = level2Config().entryDriftMaxR;
+    const fired = (e: any): FiredSignal => ({
+      side: e.signals?.direction,
+      entry: Number(e.signals?.entry_price),
+      stop: Number(e.signals?.stop_loss),
+      target: Number(e.signals?.take_profit),
+      firePrice: e.fire_price == null ? null : Number(e.fire_price),
+    });
     const ledger: LedgerRow[] = evaluations.map((e) => {
       const s = e.signals ?? {};
       const risk = Math.abs(Number(s.entry_price) - Number(s.stop_loss));
@@ -50,6 +59,8 @@ export class ForwardTestService {
         duplicateOf: e.duplicate_of ?? null,
         agents: e.agents ?? [],
         rMultiple: s.resolved_at != null && s.pips_result != null && risk > 0 ? Number(s.pips_result) / risk : null,
+        nonTradeable: nonTradeableReason(fired(e), maxDriftR),
+        tradeableR: tradeableR(fired(e), s.resolved_at != null && s.resolved_price != null ? Number(s.resolved_price) : null),
         resolvedAt: s.resolved_at ?? null,
       };
     });
@@ -101,6 +112,8 @@ export class ForwardTestService {
         status: e.signals?.status,
         eligible: e.eligible,
         duplicateOf: e.duplicate_of ?? null,
+        nonTradeable: nonTradeableReason(fired(e), maxDriftR),
+        firePrice: e.fire_price == null ? null : Number(e.fire_price),
         agents: (e.agents ?? []).map((a: any) => ({ agent: a.agent, verdict: a.verdict, hard: a.hard })),
         aiSummary: e.ai_summary ?? null,
       }));

@@ -1,4 +1,46 @@
-import { realizedR } from '../../execution/exec-util';
+import { entryDrift, entryPriceFault, realizedR, Side } from '../../execution/exec-util';
+
+export type NonTradeableReason = 'PAST_STOP' | 'PAST_TARGET' | 'ENTRY_DRIFT' | 'NO_FIRE_PRICE';
+
+export interface FiredSignal {
+  side: Side;
+  entry: number;
+  stop: number;
+  target: number;
+  firePrice: number | null;
+}
+
+/** The side of a quote the executor would trade at, or null for an empty quote. */
+export function quotePrice(side: Side, bid: number, ask: number): number | null {
+  const price = side === 'BUY' ? ask : bid;
+  return price > 0 ? price : null;
+}
+
+const CANDLE_15M_MS = 15 * 60_000;
+
+/** The close of the newest 15min candle finished by `at`. Mid price, so no spread. */
+export function lastClosedCandle(candles: Array<{ ts: string; close: number | string }>, at: string): number | null {
+  const by = Date.parse(at);
+  const done = candles.filter((c) => Date.parse(c.ts) + CANDLE_15M_MS <= by).sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+  return done.length ? Number(done[0].close) : null;
+}
+
+/** Why the executor would have refused this signal at its fire price, or null if it
+ * would have taken it. The executor's own checks. A known price stands for both sides
+ * of the quote. No price means no trade, as it does for the executor. */
+export function nonTradeableReason(s: FiredSignal, maxDriftR: number): NonTradeableReason | null {
+  if (s.firePrice == null) return 'NO_FIRE_PRICE';
+  const fault = entryPriceFault(s.side, s.stop, s.target, s.firePrice, s.firePrice);
+  if (fault) return fault;
+  return entryDrift(s.side, s.entry, s.stop, s.firePrice, s.firePrice, maxDriftR).exceeded ? 'ENTRY_DRIFT' : null;
+}
+
+/** The signal's L1 outcome, measured from the fire price with its stop and target.
+ * Null while unresolved. */
+export function tradeableR(s: FiredSignal, resolvedPrice: number | null): number | null {
+  if (s.firePrice == null || resolvedPrice == null) return null;
+  return realizedR(s.firePrice, s.stop, resolvedPrice, s.side);
+}
 
 export interface LedgerRow {
   signalId: string;
@@ -7,7 +49,9 @@ export interface LedgerRow {
   eligible: boolean;
   duplicateOf: string | null; // a repeat of an earlier setup; never counted as a setup
   agents: Array<{ agent: string; verdict: string }>;
-  rMultiple: number | null; // L1 outcome; null while the signal is open
+  rMultiple: number | null; // raw L1 outcome from the signal's entry; null while open
+  nonTradeable: NonTradeableReason | null; // null when the executor would have taken it
+  tradeableR: number | null; // outcome from the fire price; null while open
   resolvedAt: string | null;
 }
 
@@ -118,16 +162,25 @@ function watchResults(rows: WatchRow[]) {
   };
 }
 
+/** One side of the headline: tradeable signals at tradeable R, raw L1 beside it. */
+function side(setups: LedgerRow[]) {
+  const asTraded = setups.filter((r) => !r.nonTradeable).map((r) => ({ ...r, rMultiple: r.tradeableR }));
+  const raw = group(setups);
+  return { ...group(asTraded), curve: curve(asTraded), raw: { signals: raw.signals, totalR: raw.totalR } };
+}
+
 export function summarise(ledger: LedgerRow[], exits: NewsExitRow[], watch: WatchRow[]) {
   const setups = ledger.filter((r) => !r.duplicateOf);
-  const kept = setups.filter((r) => r.eligible);
-  const vetoed = setups.filter((r) => !r.eligible);
+  const refused = setups.filter((r) => r.nonTradeable);
+  const byReason: Partial<Record<NonTradeableReason, number>> = {};
+  for (const r of refused) byReason[r.nonTradeable as NonTradeableReason] = (byReason[r.nonTradeable as NonTradeableReason] ?? 0) + 1;
   return {
     setups: setups.length,
     duplicates: ledger.length - setups.length,
-    kept: { ...group(kept), curve: curve(kept) },
-    vetoed: { ...group(vetoed), curve: curve(vetoed) },
-    byVerdict: byVerdict(setups),
+    nonTradeable: { total: refused.length, byReason },
+    kept: side(setups.filter((r) => r.eligible)),
+    vetoed: side(setups.filter((r) => !r.eligible)),
+    byVerdict: byVerdict(setups.filter((r) => !r.nonTradeable).map((r) => ({ ...r, rMultiple: r.tradeableR }))),
     newsExits: newsExits(exits, watch.filter((w) => w.kind === 'NEWS_EXIT_SHADOW')),
     thesisWatch: watchResults(watch.filter((w) => w.kind === 'THESIS_CHECK' && w.flipped)),
     dollarShock: watchResults(watch.filter((w) => w.kind === 'DOLLAR_SHOCK')),

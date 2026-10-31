@@ -214,7 +214,7 @@ export class SignalsService {
         accountSize: sizing.account_size,
         accountCcy: sizing.account_ccy,
         sizingNote: sizing.sizing_note,
-        verdicts: evaluation ? formatVerdictLines(evaluation.eligible, evaluation.agents) : undefined,
+        verdicts: evaluation ? formatVerdictLines(evaluation.eligible, evaluation.agents, evaluation.duplicateOfAt) : undefined,
         aiSummary: evaluation?.aiSummary ?? undefined,
       });
     } catch (alertErr) {

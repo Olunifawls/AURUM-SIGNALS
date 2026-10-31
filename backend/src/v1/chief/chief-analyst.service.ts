@@ -1,21 +1,29 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { BROKER_ADAPTER, IBrokerAdapter } from '../../broker/broker.interface';
 import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { SystemEventsService } from '../../common/system-events.service';
-import { CotReport, DailyBar } from '../agents/types';
+import { CotReport, DailyBar, Direction } from '../agents/types';
 import { effectiveSchedule } from '../calendar/economic-calendar';
 import { MacroInstrument, V1DataService } from '../data/v1-data.service';
 import { DAY_MS } from '../v1.constants';
 import { AiSummaryService } from './ai-summary.service';
 import { AgentData, Evaluation, evaluateSignal, markDuplicate, SignalToEvaluate } from './chief-analyst';
 import { findOriginal, SetupRow } from './duplicate';
+import { lastClosedCandle, quotePrice } from '../ledger/forward-test';
 
 const EVENT_SOURCE = 'chief-analyst';
 /** OANDA can flag the daily bar complete a few seconds after 00:00 UTC, when a 4h
  * signal may also fire. Wait this long for it rather than judge on a bar-old view. */
 const BAR_WAIT_ATTEMPTS = 3;
 const BAR_WAIT_MS = 5_000;
+const OANDA_INSTRUMENT = 'XAU_USD';
 const SETUP_COLUMNS = 'id,symbol,timeframe,direction,entry_price,stop_loss,take_profit,created_at';
+
+interface FirePrice {
+  price: number;
+  source: 'QUOTE' | 'CANDLE';
+}
 
 export interface StoredEvaluation extends Evaluation {
   aiSummary: string | null;
@@ -32,6 +40,7 @@ export class ChiefAnalystService {
     private readonly data: V1DataService,
     private readonly ai: AiSummaryService,
     private readonly events: SystemEventsService,
+    @Inject(BROKER_ADAPTER) private readonly broker: IBrokerAdapter,
   ) {}
 
   protected wait(ms: number): Promise<void> {
@@ -39,26 +48,60 @@ export class ChiefAnalystService {
   }
 
   async evaluate(signalId: string, signal: SignalToEvaluate, now: () => Date = () => new Date()): Promise<StoredEvaluation> {
+    const quote = await this.liveQuote(signal.direction); // first: the waits below would age it
     await this.refreshToLatestBar(now());
     const judged = evaluateSignal(signal, await this.loadData(), now());
-    const originalId = await this.originalOf(signalId);
-    const evaluation = originalId ? markDuplicate(judged, originalId) : judged;
-    await this.store(signalId, evaluation);
+    const stored = await this.loadSetup(signalId);
+    const original = await this.originalOf(stored);
+    const evaluation = original ? markDuplicate(judged, original.id, original.created_at) : judged;
+    await this.store(signalId, evaluation, stored.created_at, quote ?? (await this.candlePrice(stored)));
 
-    const summary = await this.ai.summarise(evaluation.evidence);
+    const summary = original ? null : await this.ai.summarise(evaluation.evidence);
     if (summary) await this.storeSummary(signalId, summary.text, summary.model);
     return { ...evaluation, aiSummary: summary?.text ?? null };
   }
 
-  /** Compares stored rows, not the engine's unrounded levels. A failed read throws, so
-   * the signal has no evaluation and cannot execute. */
-  private async originalOf(signalId: string): Promise<string | null> {
+  /** The price the executor would face now. A quote failure is not fatal: the ledger
+   * falls back to the last closed candle. */
+  private async liveQuote(side: Direction): Promise<FirePrice | null> {
+    try {
+      const { bid, ask } = await this.broker.getPricing(OANDA_INSTRUMENT);
+      const price = quotePrice(side, bid, ask);
+      return price == null ? null : { price, source: 'QUOTE' };
+    } catch (err) {
+      await this.events.warn(EVENT_SOURCE, 'no quote for fire price', { error: String(err) });
+      return null;
+    }
+  }
+
+  /** No quote: the close of the last 15min candle finished by the signal's time. */
+  private async candlePrice(signal: SetupRow): Promise<FirePrice | null> {
+    const { data, error } = await this.supabase!
+      .from('candles')
+      .select('ts,close')
+      .eq('symbol', signal.symbol)
+      .eq('timeframe', '15min')
+      .lte('ts', signal.created_at)
+      .order('ts', { ascending: false })
+      .limit(2);
+    if (error) return null;
+    const close = lastClosedCandle((data ?? []) as Array<{ ts: string; close: number | string }>, signal.created_at);
+    return close == null ? null : { price: close, source: 'CANDLE' };
+  }
+
+  /** A failed read throws, so the signal has no evaluation and cannot execute. */
+  private async loadSetup(signalId: string): Promise<SetupRow> {
     if (!this.supabase) throw new Error('Supabase client not configured');
     const { data: rows, error } = await this.supabase.from('signals').select(SETUP_COLUMNS).eq('id', signalId).limit(1);
     if (error) throw new Error(`signal read failed: ${error.message}`);
     const signal = rows?.[0] as SetupRow | undefined;
     if (!signal) throw new Error(`signal ${signalId} not found`);
-    const { data: same, error: sameError } = await this.supabase
+    return signal;
+  }
+
+  /** Compares stored rows, not the engine's unrounded levels. */
+  private async originalOf(signal: SetupRow): Promise<SetupRow | null> {
+    const { data: same, error: sameError } = await this.supabase!
       .from('signals')
       .select(SETUP_COLUMNS)
       .eq('symbol', signal.symbol)
@@ -68,7 +111,9 @@ export class ChiefAnalystService {
       .eq('stop_loss', signal.stop_loss)
       .eq('take_profit', signal.take_profit);
     if (sameError) throw new Error(`duplicate check failed: ${sameError.message}`);
-    return findOriginal(signal, (same ?? []) as SetupRow[]);
+    const rows = (same ?? []) as SetupRow[];
+    const originalId = findOriginal(signal, rows);
+    return rows.find((r) => r.id === originalId) ?? null;
   }
 
   /** Fetch the newest bars, then re-check until the bar that just completed arrives. */
@@ -108,7 +153,7 @@ export class ChiefAnalystService {
     return { goldDaily, eurUsd, usdJpy, note10y, note2y, cot: reports, schedule: events, calendarEnd: coverageEnd };
   }
 
-  private async store(signalId: string, e: Evaluation): Promise<void> {
+  private async store(signalId: string, e: Evaluation, firedAt: string, fire: FirePrice | null): Promise<void> {
     if (!this.supabase) throw new Error('Supabase client not configured');
     const { error } = await this.supabase.from('signal_evaluations').insert({
       signal_id: signalId,
@@ -117,6 +162,9 @@ export class ChiefAnalystService {
       agents: e.agents,
       evidence: e.evidence,
       duplicate_of: e.duplicateOf,
+      fired_at: firedAt,
+      fire_price: fire?.price ?? null,
+      fire_price_source: fire?.source ?? null,
     });
     if (error) throw new Error(`signal_evaluations insert failed: ${error.message}`);
   }

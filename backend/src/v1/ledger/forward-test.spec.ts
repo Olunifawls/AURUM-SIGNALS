@@ -1,7 +1,9 @@
-import { LedgerRow, NewsExitRow, summarise, WatchRow } from './forward-test';
+import { FiredSignal, lastClosedCandle, LedgerRow, NewsExitRow, nonTradeableReason, quotePrice, summarise, tradeableR, WatchRow } from './forward-test';
 import { ForwardTestService } from './forward-test.service';
 
 const row = (over: Partial<LedgerRow>): LedgerRow => ({
+  nonTradeable: null,
+  tradeableR: over.rMultiple ?? null,
   signalId: 's',
   timeframe: '4h',
   createdAt: '2026-11-02T04:00:00Z',
@@ -103,15 +105,136 @@ describe('summarise', () => {
   });
 });
 
+describe('tradeable classification', () => {
+  const MAX = 0.1; // 1R is 10 here, so the drift limit is 1.0
+  const buy = (firePrice: number | null): FiredSignal => ({ side: 'BUY', entry: 2000, stop: 1990, target: 2020, firePrice });
+  const sell = (firePrice: number | null): FiredSignal => ({ side: 'SELL', entry: 2000, stop: 2010, target: 1980, firePrice });
+
+  it('takes a signal at its entry', () => {
+    expect(nonTradeableReason(buy(2000), MAX)).toBeNull();
+    expect(nonTradeableReason(sell(2000), MAX)).toBeNull();
+  });
+
+  it('refuses a price at or past the target', () => {
+    expect(nonTradeableReason(buy(2020), MAX)).toBe('PAST_TARGET');
+    expect(nonTradeableReason(buy(2031), MAX)).toBe('PAST_TARGET');
+    expect(nonTradeableReason(sell(1980), MAX)).toBe('PAST_TARGET');
+    expect(nonTradeableReason(sell(1969), MAX)).toBe('PAST_TARGET');
+  });
+
+  it('refuses a price at or past the stop', () => {
+    expect(nonTradeableReason(buy(1990), MAX)).toBe('PAST_STOP');
+    expect(nonTradeableReason(buy(1985), MAX)).toBe('PAST_STOP');
+    expect(nonTradeableReason(sell(2010), MAX)).toBe('PAST_STOP');
+    expect(nonTradeableReason(sell(2015), MAX)).toBe('PAST_STOP');
+  });
+
+  it('refuses adverse drift over the limit and accepts it up to the limit', () => {
+    expect(nonTradeableReason(buy(2001.01), MAX)).toBe('ENTRY_DRIFT');
+    expect(nonTradeableReason(buy(2001), MAX)).toBeNull();
+    expect(nonTradeableReason(sell(1998.99), MAX)).toBe('ENTRY_DRIFT');
+    expect(nonTradeableReason(sell(1999), MAX)).toBeNull();
+  });
+
+  it('accepts favourable drift of any size short of the stop', () => {
+    expect(nonTradeableReason(buy(1991), MAX)).toBeNull();
+    expect(nonTradeableReason(sell(2009), MAX)).toBeNull();
+  });
+
+  it('treats no fire price as not tradeable', () => {
+    expect(nonTradeableReason(buy(null), MAX)).toBe('NO_FIRE_PRICE');
+  });
+});
+
+describe('tradeable R', () => {
+  const buy: FiredSignal = { side: 'BUY', entry: 2000, stop: 1990, target: 2020, firePrice: 2001 };
+  const sell: FiredSignal = { side: 'SELL', entry: 2000, stop: 2010, target: 1980, firePrice: 1999 };
+
+  it('measures a BUY from the fire price', () => {
+    expect(tradeableR(buy, 2020)).toBeCloseTo(19 / 11, 2);
+    expect(tradeableR(buy, 1990)).toBe(-1);
+  });
+
+  it('measures a SELL from the fire price', () => {
+    expect(tradeableR(sell, 1980)).toBeCloseTo(19 / 11, 2);
+    expect(tradeableR(sell, 2010)).toBe(-1);
+  });
+
+  it('gives more R from a favourable fire, on a tighter stop', () => {
+    expect(tradeableR({ ...buy, firePrice: 1995 }, 2020)).toBe(5);
+  });
+
+  it('is null until resolved or without a fire price', () => {
+    expect(tradeableR(buy, null)).toBeNull();
+    expect(tradeableR({ ...buy, firePrice: null }, 2020)).toBeNull();
+  });
+});
+
+describe('fire price', () => {
+  it('uses the side of the quote the executor trades', () => {
+    expect(quotePrice('BUY', 1999, 2001)).toBe(2001);
+    expect(quotePrice('SELL', 1999, 2001)).toBe(1999);
+  });
+
+  it('treats an empty quote as no price', () => {
+    expect(quotePrice('BUY', 0, 0)).toBeNull();
+  });
+
+  it('takes the newest candle finished by that time, never one still forming', () => {
+    const candles = [{ ts: '2026-10-30T13:45:00Z', close: '3920' }, { ts: '2026-10-30T14:00:00Z', close: '3905' }];
+    expect(lastClosedCandle(candles, '2026-10-30T14:03:06Z')).toBe(3920);
+    expect(lastClosedCandle(candles, '2026-10-30T14:15:00Z')).toBe(3905);
+    expect(lastClosedCandle(candles, '2026-10-30T13:50:00Z')).toBeNull();
+  });
+});
+
+describe('summarise, tradeable only', () => {
+  const v = [{ agent: 'dollar', verdict: 'PASS' }];
+  const when = '2026-11-03T10:00:00Z';
+  const r = summarise(
+    [
+      row({ agents: v, rMultiple: 2, tradeableR: 1.5, resolvedAt: when }),
+      row({ agents: v, rMultiple: 2, tradeableR: null, nonTradeable: 'PAST_TARGET', resolvedAt: when }),
+      row({ eligible: false, agents: v, rMultiple: -1, tradeableR: -1, resolvedAt: when }),
+      row({ eligible: false, rMultiple: 2, tradeableR: 3, nonTradeable: 'ENTRY_DRIFT', resolvedAt: when }),
+      row({ duplicateOf: 'a', eligible: false, rMultiple: 2, nonTradeable: 'PAST_TARGET', resolvedAt: when }),
+    ],
+    [],
+    [],
+  );
+
+  it('uses tradeable signals and tradeable R in the headline', () => {
+    expect(r.kept).toMatchObject({ signals: 1, resolved: 1, wins: 1, totalR: 1.5 });
+    expect(r.vetoed).toMatchObject({ signals: 1, resolved: 1, losses: 1, totalR: -1 });
+    expect(r.kept.curve).toEqual([{ day: '2026-11-03', value: 1.5 }]);
+  });
+
+  it('keeps raw L1 R as a secondary figure, each setup once', () => {
+    expect(r.kept.raw).toEqual({ signals: 2, totalR: 4 });
+    expect(r.vetoed.raw).toEqual({ signals: 2, totalR: 1 });
+  });
+
+  it('counts non-tradeable setups separately, by reason, leaving duplicates out', () => {
+    expect(r.nonTradeable).toEqual({ total: 2, byReason: { PAST_TARGET: 1, ENTRY_DRIFT: 1 } });
+    expect(r.setups).toBe(4);
+    expect(r.duplicates).toBe(1);
+  });
+
+  it('gives agent stats on tradeable R only', () => {
+    expect(r.byVerdict).toEqual([{ agent: 'dollar', verdict: 'PASS', signals: 2, resolved: 2, wins: 1, losses: 1, totalR: 0.5 }]);
+  });
+});
+
 describe('ForwardTestService', () => {
   const tables: Record<string, any[]> = {
     signal_evaluations: [
       {
         signal_id: 'sig-1',
         eligible: false,
+        fire_price: 2000,
         ai_summary: null,
         agents: [{ agent: 'dollar', verdict: 'FAIL', hard: true }],
-        signals: { timeframe: '4h', created_at: '2026-11-02T04:00:00Z', status: 'HIT_TP', entry_price: 2000, stop_loss: 1990, pips_result: 20, resolved_at: '2026-11-03T01:00:00Z', resolved_price: 2020 },
+        signals: { timeframe: '4h', created_at: '2026-11-02T04:00:00Z', status: 'HIT_TP', direction: 'BUY', entry_price: 2000, stop_loss: 1990, take_profit: 2020, pips_result: 20, resolved_at: '2026-11-03T01:00:00Z', resolved_price: 2020 },
       },
     ],
     positions: [{ id: 'pos-1', signal_id: 'sig-1', side: 'BUY', entry_price: 2000, stop_loss: 1995, initial_stop_loss: 1990, realized_r: 0.5, close_reason: 'NEWS_EXIT', closed_at: 'c', status: 'CLOSED', meta: { news_exit: { event: 'NFP' } } }],
@@ -131,7 +254,29 @@ describe('ForwardTestService', () => {
     expect(r.kept.signals).toBe(0);
     expect(r.newsExits.trades[0]).toMatchObject({ event: 'NFP', exitR: 0.5, holdR: 2 });
     expect(r.recent[0]).toMatchObject({ signalId: 'sig-1', eligible: false, duplicateOf: null });
-    expect(r).toMatchObject({ setups: 1, duplicates: 0 });
+    expect(r).toMatchObject({ setups: 1, duplicates: 0, nonTradeable: { total: 0 } });
+  });
+
+  it('measures from the stored fire price and refuses one past the target', async () => {
+    const row = tables.signal_evaluations[0];
+    const withFire = (fire_price: number | null) => ({ ...client, from: (t: string) => {
+      const data = t === 'signal_evaluations' ? [{ ...row, fire_price }] : tables[t];
+      const b: any = { select: () => b, eq: () => b, order: () => b, range: async () => ({ data, error: null }) };
+      return b;
+    } });
+    const near = await new ForwardTestService(withFire(2001) as any).report();
+    expect(near.vetoed).toMatchObject({ signals: 1, resolved: 1, totalR: 1.73 });
+    expect(near.vetoed.raw).toEqual({ signals: 1, totalR: 2 });
+
+    const past = await new ForwardTestService(withFire(2025) as any).report();
+    expect(past.vetoed.signals).toBe(0);
+    expect(past.vetoed.raw).toEqual({ signals: 1, totalR: 2 });
+    expect(past.nonTradeable).toEqual({ total: 1, byReason: { PAST_TARGET: 1 } });
+    expect(past.recent[0]).toMatchObject({ nonTradeable: 'PAST_TARGET', firePrice: 2025 });
+    expect(past.byVerdict).toEqual([]);
+
+    const none = await new ForwardTestService(withFire(null) as any).report();
+    expect(none.nonTradeable.byReason).toEqual({ NO_FIRE_PRICE: 1 });
   });
 
   it('leaves R blank for a position with no recorded stop', async () => {

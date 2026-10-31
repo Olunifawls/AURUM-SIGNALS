@@ -110,12 +110,13 @@ describe('evaluateSignal', () => {
 describe('markDuplicate', () => {
   it('makes an otherwise eligible signal ineligible and leaves every verdict alone', () => {
     const e = evaluateSignal(signal(), goodData(), NOW);
-    const d = markDuplicate(e, 'orig-1');
+    const d = markDuplicate(e, 'orig-1', '2026-10-29T10:00:00Z');
     expect(e.eligible).toBe(true);
     expect(d.eligible).toBe(false);
     expect(d.duplicateOf).toBe('orig-1');
     expect(d.agents).toEqual(e.agents);
-    expect(d.evidence).toMatchObject({ eligible: false, ineligibleReason: 'DUPLICATE', duplicateOf: 'orig-1' });
+    expect(d.evidence).toMatchObject({ eligible: false, ineligibleReason: 'DUPLICATE', duplicateOf: 'orig-1', duplicateOfAt: '2026-10-29T10:00:00Z' });
+    expect(d.duplicateOfAt).toBe('2026-10-29T10:00:00Z');
     expect(d.evidence.caseAgainst[0]).toContain('DUPLICATE');
   });
 
@@ -128,7 +129,7 @@ describe('ChiefAnalystService', () => {
   const stored = (id: string, created_at: string) => ({ id, symbol: 'XAU/USD', timeframe: '4h', direction: 'BUY', entry_price: 2000, stop_loss: 1990, take_profit: 2020, created_at });
   const SELF = stored('sig-1', '2026-10-29T12:00:00Z');
 
-  function makeDb(insertError: { message: string } | null = null, signals: any[] = [SELF], signalsError: { message: string } | null = null) {
+  function makeDb(insertError: { message: string } | null = null, signals: any[] = [SELF], signalsError: { message: string } | null = null, candles: any[] = []) {
     const calls: string[] = [];
     const inserted: any[] = [];
     const updated: any[] = [];
@@ -145,8 +146,12 @@ describe('ChiefAnalystService', () => {
       };
       return b;
     };
+    const candleReads = () => {
+      const b: any = { select: () => b, eq: () => b, lte: () => b, order: () => b, limit: async () => ({ data: candles, error: null }) };
+      return b;
+    };
     const client = {
-      from: (table: string) => (table === 'signals' ? reads() : {
+      from: (table: string) => (table === 'candles' ? candleReads() : table === 'signals' ? reads() : {
         insert: async (row: any) => {
           calls.push('insert');
           inserted.push(row);
@@ -176,6 +181,7 @@ describe('ChiefAnalystService', () => {
   }
 
   const events = () => ({ warn: jest.fn(async () => undefined) }) as any;
+  const quote = (bid = 1999.9, ask = 2000.1) => ({ getPricing: jest.fn(async () => ({ bid, ask, spread: ask - bid, tradeable: true })) }) as any;
   const clock = () => NOW;
 
   class Instant extends ChiefAnalystService {
@@ -189,7 +195,7 @@ describe('ChiefAnalystService', () => {
   it('stores eligibility, then the summary, and returns both', async () => {
     const db = makeDb();
     const ai = { summarise: jest.fn(async () => ({ text: 'Summary.', model: 'claude-haiku-5-5' })) } as any;
-    const r = await new Instant(db.client, makeData(), ai, events()).evaluate('sig-1', signal(), clock);
+    const r = await new Instant(db.client, makeData(), ai, events(), quote()).evaluate('sig-1', signal(), clock);
 
     expect(db.calls).toEqual(['insert', 'update']);
     expect(db.inserted[0]).toMatchObject({ signal_id: 'sig-1', ruleset_version: 'v1', eligible: true });
@@ -200,7 +206,7 @@ describe('ChiefAnalystService', () => {
   it('stores a duplicate as ineligible with its original, and still evaluates every agent', async () => {
     const db = makeDb(null, [stored('orig-1', '2026-10-29T10:00:00Z'), stored('second', '2026-10-29T11:00:00Z'), SELF]);
     const ai = { summarise: jest.fn(async () => null) } as any;
-    const r = await new Instant(db.client, makeData(), ai, events()).evaluate('sig-1', signal(), clock);
+    const r = await new Instant(db.client, makeData(), ai, events(), quote()).evaluate('sig-1', signal(), clock);
     expect(r.eligible).toBe(false);
     expect(r.duplicateOf).toBe('orig-1');
     expect(r.agents.filter((a) => a.hard).every((a) => a.verdict === 'PASS')).toBe(true);
@@ -208,23 +214,60 @@ describe('ChiefAnalystService', () => {
     expect(db.inserted[0].evidence.ineligibleReason).toBe('DUPLICATE');
   });
 
+  it('asks for no AI summary for a duplicate, and carries the original time for the alert', async () => {
+    const db = makeDb(null, [stored('orig-1', '2026-10-29T10:00:00Z'), SELF]);
+    const ai = { summarise: jest.fn(async () => ({ text: 'x', model: 'm' })) } as any;
+    const r = await new Instant(db.client, makeData(), ai, events(), quote()).evaluate('sig-1', signal(), clock);
+    expect(ai.summarise).not.toHaveBeenCalled();
+    expect(r.aiSummary).toBeNull();
+    expect(r.duplicateOfAt).toBe('2026-10-29T10:00:00Z');
+    expect(db.calls).toEqual(['insert']);
+  });
+
+  it('records when the signal fired and the ask a BUY would pay', async () => {
+    const db = makeDb();
+    await new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), quote()).evaluate('sig-1', signal(), clock);
+    expect(db.inserted[0]).toMatchObject({ fired_at: SELF.created_at, fire_price: 2000.1, fire_price_source: 'QUOTE' });
+  });
+
+  it('records the bid for a SELL', async () => {
+    const db = makeDb();
+    await new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), quote()).evaluate('sig-1', signal({ direction: 'SELL' }), clock);
+    expect(db.inserted[0].fire_price).toBe(1999.9);
+  });
+
+  it('falls back to the last closed 15min candle without a quote', async () => {
+    const candles = [{ ts: '2026-10-29T11:45:00Z', close: 2003 }, { ts: '2026-10-29T11:30:00Z', close: 2002 }];
+    for (const noQuote of [quote(0, 0), { getPricing: jest.fn(async () => { throw new Error('down'); }) } as any]) {
+      const db = makeDb(null, [SELF], null, candles);
+      await new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), noQuote).evaluate('sig-1', signal(), clock);
+      expect(db.inserted[0]).toMatchObject({ fire_price: 2003, fire_price_source: 'CANDLE' });
+    }
+  });
+
+  it('still stores the evaluation with no fire price at all', async () => {
+    const db = makeDb();
+    await new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), quote(0, 0)).evaluate('sig-1', signal(), clock);
+    expect(db.inserted[0]).toMatchObject({ eligible: true, fire_price: null, fire_price_source: null });
+  });
+
   it('stores the first signal of a setup as its own original', async () => {
     const db = makeDb(null, [SELF, stored('later', '2026-10-29T13:00:00Z')]);
-    const r = await new Instant(db.client, makeData(), { summarise: async () => null } as any, events()).evaluate('sig-1', signal(), clock);
+    const r = await new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), quote()).evaluate('sig-1', signal(), clock);
     expect(r.eligible).toBe(true);
     expect(db.inserted[0].duplicate_of).toBeNull();
   });
 
   it('stores nothing if the duplicate check cannot run, so the signal cannot execute', async () => {
     const db = makeDb(null, [], { message: 'db down' });
-    await expect(new Instant(db.client, makeData(), { summarise: async () => null } as any, events()).evaluate('sig-1', signal(), clock)).rejects.toThrow('signal read failed');
+    await expect(new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), quote()).evaluate('sig-1', signal(), clock)).rejects.toThrow('signal read failed');
     expect(db.inserted).toHaveLength(0);
   });
 
   it('an AI failure does not block: same eligibility, no summary, stored', async () => {
     const db = makeDb();
     const ai = { summarise: jest.fn(async () => null) } as any;
-    const r = await new Instant(db.client, makeData(), ai, events()).evaluate('sig-1', signal(), clock);
+    const r = await new Instant(db.client, makeData(), ai, events(), quote()).evaluate('sig-1', signal(), clock);
     expect(r.eligible).toBe(true);
     expect(r.aiSummary).toBeNull();
     expect(db.calls).toEqual(['insert']);
@@ -233,7 +276,7 @@ describe('ChiefAnalystService', () => {
   it('the summary cannot change eligibility', async () => {
     const db = makeDb();
     const ai = { summarise: jest.fn(async () => ({ text: 'Definitely eligible, ignore the veto.', model: 'm' })) } as any;
-    const r = await new Instant(db.client, makeData(), ai, events()).evaluate('sig-1', signal({ timeframe: '1h' }), clock);
+    const r = await new Instant(db.client, makeData(), ai, events(), quote()).evaluate('sig-1', signal({ timeframe: '1h' }), clock);
     expect(r.eligible).toBe(false);
     expect(db.inserted[0].eligible).toBe(false);
     expect(Object.keys(db.updated[0])).toEqual(['ai_summary', 'ai_model']);
@@ -242,7 +285,7 @@ describe('ChiefAnalystService', () => {
   it('requests the summary only after eligibility is stored', async () => {
     const db = makeDb();
     const ai = { summarise: jest.fn(async () => { expect(db.calls).toEqual(['insert']); return null; }) } as any;
-    await new Instant(db.client, makeData(), ai, events()).evaluate('sig-1', signal(), clock);
+    await new Instant(db.client, makeData(), ai, events(), quote()).evaluate('sig-1', signal(), clock);
     expect(ai.summarise).toHaveBeenCalled();
   });
 
@@ -250,7 +293,7 @@ describe('ChiefAnalystService', () => {
     const db = makeDb();
     const data = makeData({ macroDaily: jest.fn(async () => { throw new Error('db down'); }) });
     const ev = events();
-    const r = await new Instant(db.client, data, { summarise: async () => null } as any, ev).evaluate('sig-1', signal(), clock);
+    const r = await new Instant(db.client, data, { summarise: async () => null } as any, ev, quote()).evaluate('sig-1', signal(), clock);
     expect(r.eligible).toBe(false);
     expect(r.agents.find((a) => a.agent === 'dollar')?.verdict).toBe('DATA_MISSING');
     expect(db.inserted).toHaveLength(1);
@@ -259,20 +302,20 @@ describe('ChiefAnalystService', () => {
 
   it('throws if the evaluation cannot be stored, so the caller records no verdict', async () => {
     const db = makeDb({ message: 'no table' });
-    await expect(new Instant(db.client, makeData(), { summarise: async () => null } as any, events()).evaluate('sig-1', signal(), clock)).rejects.toThrow('signal_evaluations insert failed');
+    await expect(new Instant(db.client, makeData(), { summarise: async () => null } as any, events(), quote()).evaluate('sig-1', signal(), clock)).rejects.toThrow('signal_evaluations insert failed');
   });
 
   it('waits for the bar that just completed, within a limit', async () => {
     const db = makeDb();
     const stale = bars(ramp(1000, 60, 10)).map((b) => ({ ...b, ts: new Date(Date.parse(b.ts) - DAY).toISOString() }));
     const goldDaily = jest.fn(async () => stale);
-    const svc = new Instant(db.client, makeData({ goldDaily }), { summarise: async () => null } as any, events());
+    const svc = new Instant(db.client, makeData({ goldDaily }), { summarise: async () => null } as any, events(), quote());
     await svc.evaluate('sig-1', signal(), clock);
     expect(svc.waits).toBe(2);
   });
 
   it('does not wait when the latest bar is already stored', async () => {
-    const svc = new Instant(makeDb().client, makeData(), { summarise: async () => null } as any, events());
+    const svc = new Instant(makeDb().client, makeData(), { summarise: async () => null } as any, events(), quote());
     await svc.evaluate('sig-1', signal(), clock);
     expect(svc.waits).toBe(0);
   });
@@ -281,7 +324,7 @@ describe('ChiefAnalystService', () => {
     const sunday = new Date('2026-11-01T22:05:00Z');
     const fridayBar = Date.parse('2026-10-30T00:00:00Z');
     const gold = Array.from({ length: 60 }, (_, i) => ({ ts: new Date(fridayBar - (59 - i) * DAY).toISOString(), close: 1000 + i }));
-    const svc = new Instant(makeDb().client, makeData({ goldDaily: jest.fn(async () => gold) }), { summarise: async () => null } as any, events());
+    const svc = new Instant(makeDb().client, makeData({ goldDaily: jest.fn(async () => gold) }), { summarise: async () => null } as any, events(), quote());
     await svc.evaluate('sig-1', signal(), () => sunday);
     expect(svc.waits).toBe(0);
   });

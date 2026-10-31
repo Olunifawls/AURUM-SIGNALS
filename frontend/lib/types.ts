@@ -197,6 +197,13 @@ export interface ForwardTestGroup {
   totalR: number;
 }
 
+export type ForwardTestSide = ForwardTestGroup & {
+  curve: Array<{ day: string; value: number }>;
+  raw: { signals: number; totalR: number };
+};
+
+export type NonTradeableReason = 'PAST_STOP' | 'PAST_TARGET' | 'ENTRY_DRIFT' | 'NO_FIRE_PRICE';
+
 export interface ForwardTestWatch {
   events: Array<{ positionId: string | null; agent: string; barTs: string; price: number | null; rAtEvent: number | null; finalR: number | null }>;
   settled: number;
@@ -209,8 +216,9 @@ export interface ForwardTestReport {
   newsExitMode: 'SHADOW' | 'HARD';
   setups: number;
   duplicates: number;
-  kept: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
-  vetoed: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
+  nonTradeable: { total: number; byReason: Partial<Record<NonTradeableReason, number>> };
+  kept: ForwardTestSide;
+  vetoed: ForwardTestSide;
   byVerdict: Array<ForwardTestGroup & { agent: string; verdict: string }>;
   newsExits: {
     trades: Array<{ positionId: string | null; event: string | null; at: string | null; exitR: number | null; holdR: number | null }>;
@@ -227,6 +235,8 @@ export interface ForwardTestReport {
     status: string;
     eligible: boolean;
     duplicateOf: string | null;
+    nonTradeable: NonTradeableReason | null;
+    firePrice: number | null;
     agents: Array<{ agent: string; verdict: string; hard: boolean }>;
     aiSummary: string | null;
   }>;
