@@ -20,6 +20,7 @@ const payload = (over: any = {}) =>
     duplicates: 3,
     nonTradeable: { total: 2, byReason: {} },
     activeHalts: [],
+    haltsThisWeek: [],
     errorsThisWeek: 0,
     gate: { weeksSinceV1: 1, weeksRequired: 8, demoTrades: 3, demoTradesRequired: 30 },
     calendarDaysLeft: 100,

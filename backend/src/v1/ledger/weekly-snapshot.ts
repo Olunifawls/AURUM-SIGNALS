@@ -16,12 +16,85 @@ export interface ClosedTrade {
   slippagePoints: number | null;
 }
 
+/** A row of risk_events with type TRADING_HALTED. Most are order rejections logged on
+ * every poll while halted; only those with meta.haltType are activations. */
+export interface HaltEvent {
+  created_at: string;
+  message: string;
+  meta: { haltType?: string } | null;
+}
+
+/** A row of system_halts: one per type, so it only knows that type's latest firing. */
+export interface HaltRow {
+  halt_type: string;
+  reason: string | null;
+  active: boolean;
+  triggered_at: string;
+  cleared_at: string | null;
+}
+
+export interface WeekHalt {
+  type: string;
+  reason: string | null;
+  setAt: string;
+  clearedAt: string | null;
+  status: 'ACTIVE' | 'CLEARED' | 'CLEAR_TIME_UNKNOWN';
+  timesLogged: number; // a breaker that re-fires each cycle is one activation
+}
+
+/** Breakers run every 3 minutes, so a re-fire this close is the same activation. */
+const SAME_ACTIVATION_MS = 10 * 60_000;
+const MATCH_ROW_MS = 60_000; // the row is written just before its risk_events row
+
+const haltStatus = (active: boolean, clearedAt: string | null): WeekHalt['status'] =>
+  active ? 'ACTIVE' : clearedAt ? 'CLEARED' : 'CLEAR_TIME_UNKNOWN';
+
+/** Every halt in force at any point since weekStart. An older activation of a type that
+ * fired again has no clear time, because system_halts kept only the newest. */
+export function haltsThisWeek(events: HaltEvent[], rows: HaltRow[], weekStart: Date): WeekHalt[] {
+  const start = weekStart.getTime();
+  const runs: Array<WeekHalt & { lastAt: number }> = [];
+  const real = events.filter((e) => e.meta?.haltType && Date.parse(e.created_at) >= start).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  for (const e of real) {
+    const type = e.meta?.haltType as string;
+    const at = Date.parse(e.created_at);
+    const run = runs.filter((r) => r.type === type).pop();
+    if (run && at - run.lastAt <= SAME_ACTIVATION_MS) {
+      run.lastAt = at;
+      run.timesLogged += 1;
+      continue;
+    }
+    const prefix = `${type}: `;
+    const reason = e.message.startsWith(prefix) ? e.message.slice(prefix.length) : e.message;
+    runs.push({ type, reason, setAt: e.created_at, clearedAt: null, status: 'CLEAR_TIME_UNKNOWN', timesLogged: 1, lastAt: at });
+  }
+
+  const fromRows: WeekHalt[] = [];
+  for (const row of rows) {
+    const clearedAt = row.cleared_at && !row.active ? row.cleared_at : null;
+    const inWeek = row.active || Date.parse(row.triggered_at) >= start || (clearedAt != null && Date.parse(clearedAt) >= start);
+    if (!inWeek) continue;
+    const set = Date.parse(row.triggered_at);
+    const run = runs.find((r) => r.type === row.halt_type && set >= Date.parse(r.setAt) - MATCH_ROW_MS && set <= r.lastAt + MATCH_ROW_MS);
+    if (run) {
+      run.clearedAt = clearedAt;
+      run.status = haltStatus(row.active, clearedAt);
+    } else {
+      // Manual halts log no risk_events row, and a halt can predate the week.
+      fromRows.push({ type: row.halt_type, reason: row.reason, setAt: row.triggered_at, clearedAt, status: haltStatus(row.active, clearedAt), timesLogged: 1 });
+    }
+  }
+
+  return [...runs.map(({ lastAt: _lastAt, ...h }) => h), ...fromRows].sort((a, b) => Date.parse(a.setAt) - Date.parse(b.setAt));
+}
+
 export interface SnapshotInput {
   now: Date;
   ruleset: string;
   report: ReturnType<typeof summarise>; // the Forward Test page's numbers, unchanged
   trades: ClosedTrade[]; // demo trades closed since v1 started
   activeHalts: string[];
+  haltsThisWeek: WeekHalt[];
   errorsThisWeek: number;
   v1StartedAt: string | null;
   lastCalendarEvent: string | null;
@@ -85,6 +158,7 @@ export function buildSnapshotPayload(i: SnapshotInput) {
     duplicates: r.duplicates,
     nonTradeable: r.nonTradeable,
     activeHalts: i.activeHalts,
+    haltsThisWeek: i.haltsThisWeek,
     errorsThisWeek: i.errorsThisWeek,
     gate: {
       weeksSinceV1: started == null ? 0 : Math.floor((i.now.getTime() - started) / (7 * DAY_MS)),
@@ -109,6 +183,19 @@ function londonStamp(iso: string): string {
   const p = zonedParts(new Date(iso), LONDON);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(p.day)}/${pad(p.month)}/${p.year} ${pad(p.hour)}:${pad(p.minute)} London`;
+}
+
+const MAX_HALT_LINES = 10; // the full list stays in the snapshot; Telegram caps a message
+
+function haltLines(halts: WeekHalt[] | undefined): string[] {
+  if (!halts) return ['Not recorded in this snapshot'];
+  if (!halts.length) return ['None'];
+  const lines = halts.slice(0, MAX_HALT_LINES).flatMap((h) => {
+    const end = h.status === 'ACTIVE' ? 'still active' : h.status === 'CLEARED' ? `cleared ${londonStamp(h.clearedAt as string)}` : 'clear time not recorded';
+    return [`${h.type}: ${h.reason ?? 'no reason recorded'}`, `  set ${londonStamp(h.setAt)}, ${end}`];
+  });
+  const hidden = halts.length - MAX_HALT_LINES;
+  return hidden > 0 ? [...lines, `…and ${hidden} more, in the snapshot`] : lines;
 }
 
 function tradeLine(label: string, t: SnapshotPayload['demoTrades']['thisWeek']): string {
@@ -144,6 +231,9 @@ export function formatWeeklyHeadline(p: SnapshotPayload, label: string): string 
     '━━ Account ━━',
     `Equity: ${money(a.equity, a.ccy)} (start of week ${money(a.startOfWeekEquity, a.ccy)})`,
     `HWM: ${money(a.highWaterMark, a.ccy)}, drawdown ${a.maxDrawdownPct == null ? '—' : `${a.maxDrawdownPct.toFixed(2)}%`}, open positions ${a.openPositions}`,
+    '',
+    '━━ Halts and kill switches this week ━━',
+    ...haltLines((p as Partial<SnapshotPayload>).haltsThisWeek), // rows written before this field
     '',
     '━━ Health ━━',
     `Active halts: ${p.activeHalts.join(', ') || 'none'}`,
