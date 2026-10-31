@@ -72,7 +72,9 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Run on all paths EXCEPT Next.js internals and static files.
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Run on all paths EXCEPT Next.js static files. Exclude by path prefix only: a
+    // file-extension rule also skips /api/exec/state%3Fx=.png, which bypassed auth.
+    // Anything added under public/ must be listed here by its exact path.
+    '/((?!_next/static/|_next/image$|favicon\\.ico$).*)',
   ],
 };
