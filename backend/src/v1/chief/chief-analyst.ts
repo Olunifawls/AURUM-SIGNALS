@@ -40,6 +40,8 @@ export interface EvidencePack {
   target: number;
   eventRisk: AgentInput[];
   dataTimestamps: Partial<Record<AgentName, string | null>>;
+  ineligibleReason?: 'DUPLICATE';
+  duplicateOf?: string;
 }
 
 export interface Evaluation {
@@ -47,6 +49,7 @@ export interface Evaluation {
   eligible: boolean;
   agents: AgentResult[];
   evidence: EvidencePack;
+  duplicateOf: string | null;
 }
 
 /** Eligible only if every HARD agent says PASS. FAIL and DATA_MISSING both block. */
@@ -90,5 +93,22 @@ export function evaluateSignal(signal: SignalToEvaluate, data: AgentData, now: D
     newsAgent(data.schedule, data.calendarEnd, now),
   ];
   const eligible = isEligible(agents);
-  return { ruleset: RULESET_VERSION, eligible, agents, evidence: buildPack(signal, agents, eligible, now) };
+  return { ruleset: RULESET_VERSION, eligible, agents, evidence: buildPack(signal, agents, eligible, now), duplicateOf: null };
+}
+
+/** A repeat of an earlier setup is never eligible. A data-integrity check, not a rule:
+ * every agent's verdict stands as evaluated. */
+export function markDuplicate(evaluation: Evaluation, originalId: string): Evaluation {
+  return {
+    ...evaluation,
+    eligible: false,
+    duplicateOf: originalId,
+    evidence: {
+      ...evaluation.evidence,
+      eligible: false,
+      ineligibleReason: 'DUPLICATE',
+      duplicateOf: originalId,
+      caseAgainst: [`DUPLICATE: same setup as signal ${originalId}`, ...evaluation.evidence.caseAgainst],
+    },
+  };
 }

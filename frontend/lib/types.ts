@@ -207,6 +207,8 @@ export interface ForwardTestWatch {
 export interface ForwardTestReport {
   ruleset: string;
   newsExitMode: 'SHADOW' | 'HARD';
+  setups: number;
+  duplicates: number;
   kept: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
   vetoed: ForwardTestGroup & { curve: Array<{ day: string; value: number }> };
   byVerdict: Array<ForwardTestGroup & { agent: string; verdict: string }>;
@@ -224,6 +226,7 @@ export interface ForwardTestReport {
     createdAt: string;
     status: string;
     eligible: boolean;
+    duplicateOf: string | null;
     agents: Array<{ agent: string; verdict: string; hard: boolean }>;
     aiSummary: string | null;
   }>;
