@@ -35,11 +35,15 @@ export function nonTradeableReason(s: FiredSignal, maxDriftR: number): NonTradea
   return entryDrift(s.side, s.entry, s.stop, s.firePrice, s.firePrice, maxDriftR).exceeded ? 'ENTRY_DRIFT' : null;
 }
 
-/** The signal's L1 outcome, measured from the fire price with its stop and target.
+/** The signal's L1 outcome, measured from the fire price, in units of the signal's
+ * original risk. A better fire earns more distance; it never shrinks the unit, so the
+ * result can exceed the signal's R:R, and a stop hit from a worse fire can pass -1R.
  * Null while unresolved. */
 export function tradeableR(s: FiredSignal, resolvedPrice: number | null): number | null {
-  if (s.firePrice == null || resolvedPrice == null) return null;
-  return realizedR(s.firePrice, s.stop, resolvedPrice, s.side);
+  const risk = Math.abs(s.entry - s.stop);
+  if (s.firePrice == null || resolvedPrice == null || risk === 0) return null;
+  const move = s.side === 'BUY' ? resolvedPrice - s.firePrice : s.firePrice - resolvedPrice;
+  return Math.round((move / risk) * 100) / 100;
 }
 
 export interface LedgerRow {
@@ -51,7 +55,7 @@ export interface LedgerRow {
   agents: Array<{ agent: string; verdict: string }>;
   rMultiple: number | null; // raw L1 outcome from the signal's entry; null while open
   nonTradeable: NonTradeableReason | null; // null when the executor would have taken it
-  tradeableR: number | null; // outcome from the fire price; null while open
+  tradeableR: number | null; // outcome from the fire price, in original risk; null while open
   resolvedAt: string | null;
 }
 

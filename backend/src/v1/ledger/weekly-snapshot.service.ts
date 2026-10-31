@@ -1,12 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../../broker/broker.interface';
+import { scrubString } from '../../killswitch/scrub';
 import { TradingStateService } from '../../risk/trading-state.service';
 import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { lastEventAt, effectiveSchedule } from '../calendar/economic-calendar';
 import { DAY_MS, RULESET_VERSION } from '../v1.constants';
 import { ForwardTestService } from './forward-test.service';
-import { buildSnapshotPayload, ClosedTrade, SnapshotPayload } from './weekly-snapshot';
+import { buildSnapshotPayload, ClosedTrade, HaltEvent, HaltRow, haltsThisWeek, SnapshotPayload } from './weekly-snapshot';
+
+const PAGE = 1000;
 
 export interface StoredSnapshot {
   createdAt: string;
@@ -39,18 +42,21 @@ export class WeeklySnapshotService {
     const v1StartedAt = (first?.[0]?.evaluated_at as string | undefined) ?? null;
     const weekStart = new Date(now.getTime() - 7 * DAY_MS).toISOString();
 
-    const [report, trades, open, errors, weekRef, hwm, halts, account] = await Promise.all([
+    const halts = await this.state.getActiveHalts(now); // first: it expires timed halts
+    const [report, trades, open, errors, weekRef, hwm, haltEvents, haltRows, account] = await Promise.all([
       this.ledger.report(),
       v1StartedAt ? this.closedTrades(v1StartedAt) : Promise.resolve<ClosedTrade[]>([]),
       db.from('positions').select('id', { count: 'exact', head: true }).eq('mode', 'demo').eq('status', 'OPEN'),
       db.from('system_events').select('id', { count: 'exact', head: true }).eq('level', 'ERROR').gte('created_at', weekStart),
       db.from('equity_snapshots').select('equity').eq('snapshot_type', 'WEEKLY_REF').order('ts', { ascending: false }).limit(1),
       db.from('equity_snapshots').select('high_water_mark').order('high_water_mark', { ascending: false }).limit(1),
-      this.state.getActiveHalts(now),
+      this.haltEvents(weekStart),
+      db.from('system_halts').select('halt_type,reason,active,triggered_at,cleared_at'),
       this.broker.getAccount().catch(() => null), // the snapshot still writes if the broker is down
     ]);
     if (open.error) throw new Error(`positions query failed: ${open.error.message}`);
     if (errors.error) throw new Error(`system_events query failed: ${errors.error.message}`);
+    const rows = this.checked('system_halts', haltRows) as HaltRow[];
 
     const num = (v: unknown): number | null => (v == null ? null : Number(v));
     return buildSnapshotPayload({
@@ -59,6 +65,7 @@ export class WeeklySnapshotService {
       report,
       trades,
       activeHalts: halts.map((h) => h.halt_type),
+      haltsThisWeek: haltsThisWeek(haltEvents, rows.map((r) => ({ ...r, reason: r.reason && scrubString(r.reason) })), new Date(weekStart)),
       errorsThisWeek: errors.count ?? 0,
       v1StartedAt,
       lastCalendarEvent: lastEventAt(effectiveSchedule().events),
@@ -70,6 +77,27 @@ export class WeeklySnapshotService {
         openPositions: open.count ?? 0,
       },
     });
+  }
+
+  /** Activations only: rejections share this event_type and have no meta. A breaker
+   * stuck re-firing can log thousands in a week, so this pages. */
+  private async haltEvents(weekStart: string): Promise<HaltEvent[]> {
+    const out: HaltEvent[] = [];
+    for (;;) {
+      const page = this.checked(
+        'risk_events',
+        await this.db()
+          .from('risk_events')
+          .select('created_at,message,meta')
+          .eq('event_type', 'TRADING_HALTED')
+          .not('meta->>haltType', 'is', null)
+          .gte('created_at', weekStart)
+          .order('created_at', { ascending: true })
+          .range(out.length, out.length + PAGE - 1),
+      ) as HaltEvent[];
+      out.push(...(page ?? []));
+      if ((page ?? []).length < PAGE) return out;
+    }
   }
 
   private async closedTrades(sinceIso: string): Promise<ClosedTrade[]> {

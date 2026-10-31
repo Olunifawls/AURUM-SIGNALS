@@ -64,7 +64,7 @@ export default function ForwardTestPage() {
         <h1 className="text-xl font-semibold">Forward Test — ruleset {report?.ruleset ?? 'v1'}</h1>
         <p className="mt-2 max-w-3xl text-sm text-neutral-400">{COPY}</p>
         <p className="mt-1 text-xs text-neutral-500">
-          Headline R counts only signals the executor would have taken at the price when they fired, measured from that price. Signal R is before broker slippage; fire prices from candles are also before spread.
+          Headline R counts only signals the executor would have taken at the price when they fired, measured from that price in units of the signal&apos;s original risk. Signal R is before broker slippage; fire prices from candles are also before spread.
         </p>
       </div>
 

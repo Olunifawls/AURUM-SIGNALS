@@ -150,18 +150,50 @@ describe('tradeable R', () => {
   const buy: FiredSignal = { side: 'BUY', entry: 2000, stop: 1990, target: 2020, firePrice: 2001 };
   const sell: FiredSignal = { side: 'SELL', entry: 2000, stop: 2010, target: 1980, firePrice: 1999 };
 
-  it('measures a BUY from the fire price', () => {
-    expect(tradeableR(buy, 2020)).toBeCloseTo(19 / 11, 2);
-    expect(tradeableR(buy, 1990)).toBe(-1);
+  // Original risk is 10 throughout, whatever the fire price.
+  it('measures a BUY with an adverse fire in the original unit', () => {
+    expect(tradeableR(buy, 2020)).toBe(1.9);
+    expect(tradeableR(buy, 1990)).toBe(-1.1);
   });
 
-  it('measures a SELL from the fire price', () => {
-    expect(tradeableR(sell, 1980)).toBeCloseTo(19 / 11, 2);
-    expect(tradeableR(sell, 2010)).toBe(-1);
+  it('measures a BUY with a favourable fire in the original unit', () => {
+    expect(tradeableR({ ...buy, firePrice: 1995 }, 2020)).toBe(2.5);
+    expect(tradeableR({ ...buy, firePrice: 1995 }, 1990)).toBe(-0.5);
   });
 
-  it('gives more R from a favourable fire, on a tighter stop', () => {
-    expect(tradeableR({ ...buy, firePrice: 1995 }, 2020)).toBe(5);
+  it('measures a SELL with an adverse fire in the original unit', () => {
+    expect(tradeableR(sell, 1980)).toBe(1.9);
+    expect(tradeableR(sell, 2010)).toBe(-1.1);
+  });
+
+  it('measures a SELL with a favourable fire in the original unit', () => {
+    expect(tradeableR({ ...sell, firePrice: 2005 }, 1980)).toBe(2.5);
+    expect(tradeableR({ ...sell, firePrice: 2005 }, 2010)).toBe(-0.5);
+  });
+
+  it('gives the raw R when it fires at the entry', () => {
+    expect(tradeableR({ ...buy, firePrice: 2000 }, 2020)).toBe(2);
+    expect(tradeableR({ ...sell, firePrice: 2000 }, 2010)).toBe(-1);
+  });
+
+  it('does not inflate the replay trade that shrank its unit', () => {
+    const s: FiredSignal = { side: 'SELL', entry: 4190.615, stop: 4216.5602, target: 4138.7246, firePrice: 4205.4 };
+    expect(tradeableR(s, s.target)).toBe(2.57);
+  });
+
+  it('has no R with no risk to measure', () => {
+    expect(tradeableR({ ...buy, entry: 1990 }, 2020)).toBeNull();
+  });
+
+  it('flows through the summary and agent stats in the original unit', () => {
+    const fire = (rMultiple: number, firePrice: number) => {
+      const s: FiredSignal = { side: 'BUY', entry: 2000, stop: 1990, target: 2020, firePrice };
+      return row({ agents: [{ agent: 'dollar', verdict: 'PASS' }], rMultiple, tradeableR: tradeableR(s, s.target), resolvedAt: '2026-11-03T10:00:00Z' });
+    };
+    const r = summarise([fire(2, 1995), fire(2, 2001)], [], []);
+    expect(r.kept).toMatchObject({ signals: 2, totalR: 4.4 });
+    expect(r.kept.raw).toEqual({ signals: 2, totalR: 4 });
+    expect(r.byVerdict[0].totalR).toBe(4.4);
   });
 
   it('is null until resolved or without a fire price', () => {
@@ -265,7 +297,7 @@ describe('ForwardTestService', () => {
       return b;
     } });
     const near = await new ForwardTestService(withFire(2001) as any).report();
-    expect(near.vetoed).toMatchObject({ signals: 1, resolved: 1, totalR: 1.73 });
+    expect(near.vetoed).toMatchObject({ signals: 1, resolved: 1, totalR: 1.9 });
     expect(near.vetoed.raw).toEqual({ signals: 1, totalR: 2 });
 
     const past = await new ForwardTestService(withFire(2025) as any).report();
