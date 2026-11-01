@@ -8,6 +8,38 @@ import {
   AlertResolution,
 } from './alert-format';
 
+describe('formatNewSignal with an AI summary', () => {
+  const verdicts = ['✅ KEPT, all HARD agents passed'];
+
+  it('puts the summary above the disclaimer', () => {
+    const lines = formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts, aiSummary: 'Eligible BUY.' }).split('\n');
+    expect(lines.slice(-2)).toEqual(['Eligible BUY.', expect.stringContaining('not financial advice')]);
+  });
+
+  it('a failed summary leaves the same alert with no summary line', () => {
+    const text = formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts });
+    expect(text).toBe(formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts, aiSummary: '   ' }));
+    expect(text).toContain('not financial advice');
+    expect(text).not.toContain('undefined');
+  });
+
+  it('never passes 4096 characters and keeps everything but the summary', () => {
+    const plain = formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts });
+    const text = formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts, aiSummary: 'x'.repeat(10_000) });
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text.length).toBeGreaterThan(4000);
+    expect(text).toContain('…');
+    for (const line of plain.split('\n')) expect(text).toContain(line);
+  });
+
+  it('leaves a summary alone at exactly the limit', () => {
+    const room = 4096 - formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts }).length - 1;
+    const text = formatNewSignal({ ...SAMPLE_ALERT_SIGNAL, verdicts, aiSummary: 'x'.repeat(room) });
+    expect(text.length).toBe(4096);
+    expect(text).not.toContain('…');
+  });
+});
+
 describe('(b) formatNewSignal — exact format', () => {
   it('matches the spec format including the sizing line', () => {
     const expected = [
