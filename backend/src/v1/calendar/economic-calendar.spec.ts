@@ -50,22 +50,28 @@ describe('mergeSchedules', () => {
     expect(mergeSchedules([e], [e])).toEqual({ events: [e], disagreements: [] });
   });
 
-  it('same day, live earlier: uses the earlier time and reports it', () => {
+  it('same day, live earlier: the official time wins and it is reported', () => {
     const r = mergeSchedules([at('CPI', '2026-11-10T13:30:00.000Z')], [at('CPI', '2026-11-10T12:30:00.000Z')]);
-    expect(r.events.map((e) => e.at)).toEqual(['2026-11-10T12:30:00.000Z']);
-    expect(r.disagreements).toEqual([{ name: 'CPI', staticAt: '2026-11-10T13:30:00.000Z', liveAt: '2026-11-10T12:30:00.000Z', usedAt: '2026-11-10T12:30:00.000Z' }]);
+    expect(r.events.map((e) => e.at)).toEqual(['2026-11-10T13:30:00.000Z']);
+    expect(r.disagreements).toEqual([{ name: 'CPI', staticAt: '2026-11-10T13:30:00.000Z', liveAt: '2026-11-10T12:30:00.000Z', usedAt: '2026-11-10T13:30:00.000Z' }]);
   });
 
-  it('same day, static earlier: keeps the static time and reports it', () => {
+  it('same day, live later: the official time wins and it is reported', () => {
     const r = mergeSchedules([at('NFP', '2027-11-05T12:30:00.000Z')], [at('NFP', '2027-11-05T13:30:00.000Z')]);
     expect(r.events.map((e) => e.at)).toEqual(['2027-11-05T12:30:00.000Z']);
     expect(r.disagreements[0].usedAt).toBe('2027-11-05T12:30:00.000Z');
   });
 
-  it('different days, live earlier: uses the earlier time and keeps the official release', () => {
-    const r = mergeSchedules([at('NFP', '2027-01-08T13:30:00.000Z')], [at('NFP', '2027-01-01T13:30:00.000Z')]);
-    expect(r.events.map((e) => e.at)).toEqual(['2027-01-01T13:30:00.000Z', '2027-01-08T13:30:00.000Z']);
-    expect(r.disagreements).toHaveLength(1);
+  it.each([
+    ['NFP', '2027-01-08T13:30:00.000Z', '2027-01-01T13:30:00.000Z'], // 1 Jan is a US holiday
+    ['NFP', '2027-10-08T12:30:00.000Z', '2027-10-01T12:30:00.000Z'],
+    ['NFP', '2027-11-05T12:30:00.000Z', '2027-11-05T13:30:00.000Z'], // US still on summer time
+    ['CPI', '2027-05-12T12:30:00.000Z', '2027-05-11T12:30:00.000Z'],
+    ['FOMC', '2027-06-09T18:00:00.000Z', '2027-06-16T18:00:00.000Z'],
+  ])('%s: only the official %s is scheduled, and the gap is reported', (name, staticAt, liveAt) => {
+    const r = mergeSchedules([at(name, staticAt)], [at(name, liveAt)]);
+    expect(r.events.map((e) => e.at)).toEqual([staticAt]);
+    expect(r.disagreements).toEqual([{ name, staticAt, liveAt, usedAt: staticAt }]);
   });
 
   it('different days, live later: keeps only the official earlier release', () => {
@@ -96,9 +102,25 @@ describe('effectiveSchedule', () => {
     ]);
   });
 
+  it('uses the official time for all three, and keeps the warning', () => {
+    expect(disagreements.map((d) => d.usedAt)).toEqual(['2027-01-08T13:30:00.000Z', '2027-10-08T12:30:00.000Z', '2027-11-05T12:30:00.000Z']);
+  });
+
   it('never loses an official release', () => {
     const times = new Set(events.map((e) => e.at));
     for (const e of staticEvents()) expect(times.has(e.at)).toBe(true);
+  });
+
+  it('schedules exactly the official releases wherever they have coverage', () => {
+    const covered = events.filter((e) => e.at >= '2026-11-01');
+    const official = staticEvents();
+    expect(covered.map((e) => `${e.name} ${e.at}`).sort()).toEqual(official.map((e) => `${e.name} ${e.at}`).sort());
+  });
+
+  it('drops the first-Friday guesses', () => {
+    const times = events.map((e) => e.at);
+    expect(times).not.toContain('2027-01-01T13:30:00.000Z');
+    expect(times).not.toContain('2027-10-01T12:30:00.000Z');
   });
 
   it('is sorted', () => {

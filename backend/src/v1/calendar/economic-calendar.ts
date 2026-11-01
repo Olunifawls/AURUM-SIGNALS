@@ -57,38 +57,33 @@ export function liveSourceEvents(): EconomicEvent[] {
 const monthKey = (e: EconomicEvent): string => `${e.name}:${e.at.slice(0, 7)}`;
 
 /**
- * Merge the two sources. Where they disagree on a release the earlier time is used
- * and the disagreement is returned for logging.
+ * Merge the two sources. An official entry wins on both date and time; the other
+ * source fills only the months the official schedule has no entry for. Every
+ * disagreement is returned for logging.
  *
- * The first-Friday rule can name a different DAY from the official schedule (BLS
- * moved Jan and Oct 2027 to the second Friday). There the earlier time is kept AND
- * the official time stays in the schedule: the rule's guess must not delete a real
- * tier-1 release from the news exit.
+ * The other source is a committed list plus the first-Friday rule, not a feed. It
+ * guesses wrong: BLS moved Jan and Oct 2027 to the second Friday, and 13:30 UK is
+ * an hour late in the week the US is still on summer time.
  */
 export function mergeSchedules(
   official: EconomicEvent[],
   live: EconomicEvent[],
 ): { events: EconomicEvent[]; disagreements: CalendarDisagreement[] } {
-  const events = new Map(official.map((e) => [monthKey(e), [e]]));
+  const events = new Map(official.map((e) => [monthKey(e), e]));
   const disagreements: CalendarDisagreement[] = [];
 
   for (const l of live) {
     const key = monthKey(l);
-    const matches = events.get(key);
-    if (!matches) {
-      events.set(key, [l]);
+    const s = events.get(key);
+    if (!s) {
+      events.set(key, l);
       continue;
     }
-    const s = matches[0];
-    if (s.at === l.at) continue;
-    const usedAt = l.at < s.at ? l.at : s.at;
-    disagreements.push({ name: l.name, staticAt: s.at, liveAt: l.at, usedAt });
-    const sameDay = s.at.slice(0, 10) === l.at.slice(0, 10);
-    events.set(key, sameDay ? [makeEvent(s.name, usedAt)] : l.at < s.at ? [makeEvent(s.name, usedAt), s] : [s]);
+    if (s.at !== l.at) disagreements.push({ name: l.name, staticAt: s.at, liveAt: l.at, usedAt: s.at });
   }
 
   return {
-    events: [...events.values()].flat().sort((a, b) => a.at.localeCompare(b.at)),
+    events: [...events.values()].sort((a, b) => a.at.localeCompare(b.at)),
     disagreements,
   };
 }
