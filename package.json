@@ -12,7 +12,8 @@
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend",
     "test": "npm run test --workspace=backend && npm run test --workspace=frontend",
     "backtest": "npm run backtest --workspace=backend",
-    "telegram:chatid": "npm run telegram:chatid --workspace=backend"
+    "telegram:chatid": "npm run telegram:chatid --workspace=backend",
+    "smoke:db": "npm run smoke:db --workspace=backend"
   },
   "engines": {
     "node": ">=20 <21"
