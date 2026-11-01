@@ -29,7 +29,7 @@ export const SMOKE_QUERIES: SmokeQuery[] = [
     source: LEDGER,
     table: 'signal_evaluations',
     select:
-      'signal_id,eligible,duplicate_of,fire_price,agents,ai_summary,signals(timeframe,created_at,status,direction,entry_price,stop_loss,take_profit,pips_result,resolved_at,resolved_price)',
+      'signal_id,eligible,duplicate_of,fire_price,agents,ai_summary,signals!signal_evaluations_signal_id_fkey(timeframe,created_at,status,direction,entry_price,stop_loss,take_profit,pips_result,resolved_at,resolved_price)',
     filters: { ruleset_version: 'eq.v1', order: 'id.asc' },
   },
   {
