@@ -32,7 +32,7 @@ export class ForwardTestService {
     const [evaluations, positions, watch] = await Promise.all([
       this.all<any>(
         'signal_evaluations',
-        'signal_id,eligible,duplicate_of,fire_price,agents,ai_summary,signals(timeframe,created_at,status,direction,entry_price,stop_loss,take_profit,pips_result,resolved_at,resolved_price)',
+        'signal_id,eligible,duplicate_of,fire_price,agents,ai_summary,signals!signal_evaluations_signal_id_fkey(timeframe,created_at,status,direction,entry_price,stop_loss,take_profit,pips_result,resolved_at,resolved_price)',
         (q) => q.eq('ruleset_version', RULESET_VERSION),
       ),
       this.all<any>('positions', 'id,signal_id,side,entry_price,stop_loss,initial_stop_loss,realized_r,close_reason,closed_at,status,meta'),
