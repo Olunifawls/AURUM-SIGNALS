@@ -105,6 +105,25 @@ describe('summarise', () => {
   });
 });
 
+describe('news exit and watch R share the realized_r unit', () => {
+  const SIGNAL = { entry: 2000, stop: 1990 };
+
+  it('holdR is in the signal risk, beside an exitR that already is', () => {
+    const exit: NewsExitRow = { positionId: 'p', event: 'CPI', closedAt: 'x', side: 'BUY', entry: 1995, initialStop: 1990, realizedR: 1, signalResolvedPrice: 2020, signal: SIGNAL };
+    expect(summarise([], [exit], []).newsExits.trades[0]).toMatchObject({ exitR: 1, holdR: 2.5 }); // not 5, the fill's own risk
+  });
+
+  it('rAtEvent is in the signal risk, beside a finalR that already is', () => {
+    const watch: WatchRow = { kind: 'NEWS_EXIT_SHADOW', positionId: 'p', agent: 'CPI', flipped: false, barTs: 'x', price: 2010, side: 'BUY', entry: 1995, initialStop: 1990, finalR: 2.5, signal: SIGNAL };
+    expect(summarise([], [], [watch]).newsExits.trades[0]).toMatchObject({ exitR: 1.5, holdR: 2.5 }); // not 3
+  });
+
+  it('keeps the fill risk for a position with no signal', () => {
+    const exit: NewsExitRow = { positionId: 'p', event: 'CPI', closedAt: 'x', side: 'BUY', entry: 1995, initialStop: 1990, realizedR: 1, signalResolvedPrice: 2020 };
+    expect(summarise([], [exit], []).newsExits.trades[0].holdR).toBe(5);
+  });
+});
+
 describe('tradeable classification', () => {
   const MAX = 0.1; // 1R is 10 here, so the drift limit is 1.0
   const buy = (firePrice: number | null): FiredSignal => ({ side: 'BUY', entry: 2000, stop: 1990, target: 2020, firePrice });

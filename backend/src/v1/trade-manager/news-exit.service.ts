@@ -4,7 +4,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { BROKER_ADAPTER, IBrokerAdapter } from '../../broker/broker.interface';
 import { AlertsService } from '../../alerts/alerts.service';
-import { realizedR } from '../../execution/exec-util';
+import { closedPositionR } from '../../execution/position-r';
 import { level2Config } from '../../level2/level2.config';
 import { EconomicEvent, effectiveSchedule } from '../calendar/economic-calendar';
 import { NEWS_EXIT_MODE, NewsExitMode } from '../v1.constants';
@@ -87,8 +87,7 @@ export class NewsExitService {
 
     const trade = await this.broker.getTrade(tradeId);
     const closePrice = trade.closePrice ?? Number(pos.entry_price);
-    const initialStop = Number(pos.initial_stop_loss ?? pos.stop_loss);
-    const r = realizedR(Number(pos.entry_price), initialStop, closePrice, pos.side);
+    const r = await closedPositionR(this.supabase!, pos, closePrice);
     const stamp = now.toISOString();
 
     await this.supabase!

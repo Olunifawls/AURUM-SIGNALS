@@ -5,6 +5,7 @@ import { BROKER_ADAPTER, IBrokerAdapter } from '../broker/broker.interface';
 import { TradingStateService } from '../risk/trading-state.service';
 import { level2Config } from '../level2/level2.config';
 import { AlertsService } from '../alerts/alerts.service';
+import { closedPositionR } from '../execution/position-r';
 
 const round = (n: number, dp = 2) => Math.round(n * 10 ** dp) / 10 ** dp;
 
@@ -153,7 +154,7 @@ export class ExecutionReadService {
     // Find the open position in the DB.
     const { data: rows } = await db
       .from('positions')
-      .select('id,entry_price,stop_loss,take_profit,side,mode')
+      .select('id,signal_id,entry_price,stop_loss,initial_stop_loss,take_profit,side,mode')
       .eq('broker_trade_id', brokerTradeId)
       .eq('status', 'OPEN')
       .limit(1);
@@ -166,9 +167,7 @@ export class ExecutionReadService {
     const trade = await this.broker.getTrade(brokerTradeId);
     const closePrice = trade.closePrice ?? Number(pos?.entry_price ?? 0);
     const realizedPl = trade.realizedPl ?? 0;
-    const realizedR = pos
-      ? (await import('../execution/exec-util')).realizedR(Number(pos.entry_price), Number(pos.stop_loss), closePrice, pos.side)
-      : null;
+    const realizedR = pos ? await closedPositionR(db, pos, closePrice) : null;
 
     const now = new Date().toISOString();
     if (pos) {

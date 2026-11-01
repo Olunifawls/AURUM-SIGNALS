@@ -34,4 +34,26 @@ describe('ExecutionReadService.closeTrade', () => {
 
     expect(updates[0]).toMatchObject({ close_reason: 'MANUAL', closed_at: '2026-07-17T13:38:41.000Z' });
   });
+
+  it('measures R in the signal risk, not a stop moved to breakeven', async () => {
+    const position = { id: 'pos-1', signal_id: 'sig-1', entry_price: 1995, stop_loss: 1995.5, initial_stop_loss: 1990, take_profit: 2020, side: 'BUY', mode: 'demo' };
+    const updates: any[] = [];
+    const reads = (rows: unknown[]) => {
+      const b: any = { select: () => b, eq: () => b, limit: async () => ({ data: rows, error: null }) };
+      return b;
+    };
+    const client = {
+      from: (table: string) =>
+        table === 'signals'
+          ? reads([{ entry_price: 2000, stop_loss: 1990 }])
+          : { ...reads([position]), update: (fields: any) => { updates.push(fields); return { eq: async () => ({ error: null }) }; }, insert: async () => ({ error: null }) },
+    };
+    const broker = { closeTrade: jest.fn(async () => ({ closed: true })), getTrade: jest.fn(async () => ({ closePrice: 2005, realizedPl: 5 })) };
+    const svc = new (ExecutionReadService as any)(client, broker, {}, {});
+
+    const result = await svc.closeTrade('T1');
+
+    expect(updates[0].realized_r).toBe(1); // 10 of move on the signal's 10 of risk
+    expect(result.realizedR).toBe(1);
+  });
 });

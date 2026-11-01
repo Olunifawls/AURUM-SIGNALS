@@ -3,7 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { level2Config } from '../../level2/level2.config';
 import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { NEWS_EXIT_MODE, RULESET_VERSION } from '../v1.constants';
-import { FiredSignal, LedgerRow, NewsExitRow, nonTradeableReason, summarise, tradeableR, WatchRow } from './forward-test';
+import { FiredSignal, LedgerRow, NewsExitRow, nonTradeableReason, SignalRisk, summarise, tradeableR, WatchRow } from './forward-test';
 
 const PAGE = 1000;
 
@@ -40,6 +40,10 @@ export class ForwardTestService {
     ]);
 
     const signals = new Map(evaluations.map((e) => [e.signal_id as string, e.signals]));
+    const signalRisk = (id: string | null): SignalRisk | null => {
+      const s = id ? signals.get(id) : null;
+      return s ? { entry: Number(s.entry_price), stop: Number(s.stop_loss) } : null;
+    };
     const maxDriftR = level2Config().entryDriftMaxR;
     const fired = (e: any): FiredSignal => ({
       side: e.signals?.direction,
@@ -82,6 +86,7 @@ export class ForwardTestService {
           initialStop: stopOf(p) as number, // set by the same path that wrote the exit
           realizedR: p.realized_r == null ? null : Number(p.realized_r),
           signalResolvedPrice: price == null ? null : Number(price),
+          signal: signalRisk(p.signal_id),
         };
       });
 
@@ -99,6 +104,7 @@ export class ForwardTestService {
         entry: p ? Number(p.entry_price) : null,
         initialStop: p ? stopOf(p) : null,
         finalR: p?.status === 'CLOSED' && p.realized_r != null ? Number(p.realized_r) : null,
+        signal: p ? signalRisk(p.signal_id) : null,
       };
     });
 

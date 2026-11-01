@@ -72,6 +72,20 @@ describe('exit time comes from the broker', () => {
   });
 });
 
+describe('realized_r uses the signal original risk', () => {
+  it('a better fill keeps the signal unit; the fill stays the numerator', async () => {
+    const { client, updated } = makeSupabase([{ ...openPos, signal_id: 'sig-1', entry_price: 1995, initial_stop_loss: 1990 }]);
+    const from = client.from;
+    client.from = (table: string) => {
+      if (table !== 'signals') return from(table);
+      const b: any = { select: () => b, eq: () => b, limit: async () => ({ data: [{ entry_price: 2000, stop_loss: 1990 }], error: null }) };
+      return b;
+    };
+    await new ReconciliationService(client, makeAdapter(), new ExecutionReadinessService(), alerts, breaker).reconcile();
+    expect(updated.positions[0].realized_r).toBe(2.5); // (2020-1995)/10; the fill's own risk would give 5
+  });
+});
+
 describe('close reason is classified against initial_stop_loss', () => {
   // Real trade from 2026-07-17: SELL, stop moved to entry-0.1, closed at breakeven.
   const moved = {
