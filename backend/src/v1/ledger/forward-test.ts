@@ -39,11 +39,23 @@ export function nonTradeableReason(s: FiredSignal, maxDriftR: number): NonTradea
  * original risk. A better fire earns more distance; it never shrinks the unit, so the
  * result can exceed the signal's R:R, and a stop hit from a worse fire can pass -1R.
  * Null while unresolved. */
-export function tradeableR(s: FiredSignal, resolvedPrice: number | null): number | null {
+export function tradeableR(s: Pick<FiredSignal, 'side' | 'entry' | 'stop' | 'firePrice'>, resolvedPrice: number | null): number | null {
   const risk = Math.abs(s.entry - s.stop);
   if (s.firePrice == null || resolvedPrice == null || risk === 0) return null;
   const move = s.side === 'BUY' ? resolvedPrice - s.firePrice : s.firePrice - resolvedPrice;
   return Math.round((move / risk) * 100) / 100;
+}
+
+export interface SignalRisk {
+  entry: number;
+  stop: number;
+}
+
+/** A demo trade's R: from its fill, in the signal's original risk, the same unit as
+ * tradeableR. A position with no signal keeps the fill's own risk. */
+export function positionR(pos: { side: Side; fill: number; initialStop: number }, signal: SignalRisk | null | undefined, price: number): number | null {
+  const original = signal ? tradeableR({ side: pos.side, entry: signal.entry, stop: signal.stop, firePrice: pos.fill }, price) : null;
+  return original ?? realizedR(pos.fill, pos.initialStop, price, pos.side);
 }
 
 export interface LedgerRow {
@@ -68,6 +80,7 @@ export interface NewsExitRow {
   initialStop: number;
   realizedR: number | null;
   signalResolvedPrice: number | null;
+  signal?: SignalRisk | null;
 }
 
 export interface WatchRow {
@@ -81,6 +94,7 @@ export interface WatchRow {
   entry: number | null;
   initialStop: number | null;
   finalR: number | null; // null while the trade is open
+  signal?: SignalRisk | null;
 }
 
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -133,7 +147,7 @@ function newsExits(rows: NewsExitRow[], shadow: WatchRow[]) {
     event: r.event,
     at: r.closedAt,
     exitR: r.realizedR,
-    holdR: r.signalResolvedPrice == null ? null : realizedR(r.entry, r.initialStop, r.signalResolvedPrice, r.side),
+    holdR: r.signalResolvedPrice == null ? null : positionR({ side: r.side, fill: r.entry, initialStop: r.initialStop }, r.signal, r.signalResolvedPrice),
   }));
   // SHADOW: the T-15 price against what the trade really made. Null until it closes.
   const logged = watchResults(shadow).events.map((e) => ({ positionId: e.positionId, event: e.agent, at: e.barTs, exitR: e.rAtEvent, holdR: e.finalR }));
@@ -154,7 +168,7 @@ function watchResults(rows: WatchRow[]) {
     agent: r.agent,
     barTs: r.barTs,
     price: r.price,
-    rAtEvent: r.price != null && r.entry != null && r.initialStop != null && r.side ? realizedR(r.entry, r.initialStop, r.price, r.side) : null,
+    rAtEvent: r.price != null && r.entry != null && r.initialStop != null && r.side ? positionR({ side: r.side, fill: r.entry, initialStop: r.initialStop }, r.signal, r.price) : null,
     finalR: r.finalR,
   }));
   const settled = events.filter((e) => e.rAtEvent != null && e.finalR != null);

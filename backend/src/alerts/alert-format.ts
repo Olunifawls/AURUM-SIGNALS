@@ -14,6 +14,9 @@ export interface AlertFactors {
   F6: boolean;
 }
 
+/** Telegram rejects a longer message outright, which would lose the alert. */
+const TELEGRAM_MAX_CHARS = 4096;
+
 export interface AlertSignal {
   direction: Direction;
   timeframe: string;
@@ -84,6 +87,19 @@ const safeFixed = (n: number | null | undefined, dec: number): string =>
 /** Build the full L1 §5.5 new-signal message. Every field is null-safe so a
  * missing value degrades one line rather than throwing. */
 function buildNewSignal(s: AlertSignal): string {
+  const fixed = newSignalLines(s);
+  const room = TELEGRAM_MAX_CHARS - [...fixed, DISCLAIMER].join('\n').length - 1;
+  const summary = fitted(s.aiSummary?.trim(), room);
+  return [...fixed, ...(summary ? [summary] : []), DISCLAIMER].join('\n');
+}
+
+/** The summary is the one optional part, so it gives way to Telegram's limit. */
+function fitted(text: string | undefined, room: number): string | null {
+  if (!text || room <= 1) return null;
+  return text.length <= room ? text : `${text.slice(0, room - 1).trimEnd()}…`;
+}
+
+function newSignalLines(s: AlertSignal): string[] {
   const c = (b: boolean) => (b ? '✓' : '✗');
   const entry = toNum(s.entry);
   const stopDelta = toNum(s.stop) - entry;
@@ -116,9 +132,7 @@ function buildNewSignal(s: AlertSignal): string {
     )} Momentum ${c(f.F6)}`,
     sizingLine,
     ...(s.verdicts ?? []),
-    ...(s.aiSummary ? [s.aiSummary] : []),
-    DISCLAIMER,
-  ].join('\n');
+  ];
 }
 
 const AGENT_LABEL: Record<string, string> = {

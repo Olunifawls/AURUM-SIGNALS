@@ -9,7 +9,8 @@ import { level2Config } from '../level2/level2.config';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { fourDp } from '../v1/chief/duplicate';
 import { ExecutionReadinessService } from './readiness.service';
-import { achievedRr, actualRiskPctAtFill, entryDrift, entryPriceFault, isSignalStale, isTimeStopped, realizedR, slippagePoints } from './exec-util';
+import { achievedRr, actualRiskPctAtFill, entryDrift, entryPriceFault, isSignalStale, isTimeStopped, slippagePoints } from './exec-util';
+import { closedPositionR } from './position-r';
 
 export interface SignalForExec {
   id: string;
@@ -213,8 +214,7 @@ export class ExecutionService {
           /* best-effort */
         }
       }
-      const initialSL = Number(pos.initial_stop_loss ?? pos.stop_loss);
-      const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
+      const rr = await closedPositionR(this.supabase, pos, closePrice);
       await this.supabase
         .from('positions')
         .update({ status: 'CLOSED', close_reason: 'TIME_STOP', closed_at: closedAt, close_price: closePrice, realized_r: rr, updated_at: now.toISOString() })

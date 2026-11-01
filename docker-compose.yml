@@ -1,6 +1,12 @@
 # AURUM SIGNALS — production stack (VPS). Only nginx is public (80/443).
 # backend + frontend are INTERNAL ONLY (no published ports). Secrets come from
 # ./.env (env_file; NOT in git). The always-on backend runs the schedule crons.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   backend:
     build:
@@ -12,6 +18,7 @@ services:
     expose:
       - "3001" # internal network only — never published to the host/internet
     restart: unless-stopped
+    logging: *logging
     networks: [aurum]
 
   frontend:
@@ -29,6 +36,7 @@ services:
       - "3000" # internal only
     depends_on: [backend]
     restart: unless-stopped
+    logging: *logging
     networks: [aurum]
 
   nginx:
@@ -42,6 +50,7 @@ services:
       - ./certbot-webroot:/var/www/certbot
     depends_on: [frontend]
     restart: unless-stopped
+    logging: *logging
     networks: [aurum]
 
   # ── L2-READY (INC-10 note; NOT implemented) ────────────────────────────────

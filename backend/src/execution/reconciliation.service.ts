@@ -7,7 +7,8 @@ import { AlertsService } from '../alerts/alerts.service';
 import { SYMBOL } from '../ingestion/ingestion.constants';
 import { CircuitBreakerService } from '../killswitch/circuit-breaker.service';
 import { ExecutionReadinessService } from './readiness.service';
-import { inferCloseReason, realizedR } from './exec-util';
+import { inferCloseReason } from './exec-util';
+import { closedPositionR } from './position-r';
 
 const OANDA_INSTR = 'XAU_USD';
 
@@ -100,7 +101,7 @@ export class ReconciliationService implements OnModuleInit {
         if (trade.state === 'CLOSED') {
           const closePrice = trade.closePrice ?? Number(pos.entry_price);
           const initialSL = Number(pos.initial_stop_loss ?? pos.stop_loss);
-          const rr = realizedR(Number(pos.entry_price), initialSL, closePrice, pos.side);
+          const rr = await closedPositionR(this.supabase, pos, closePrice);
           const reason = inferCloseReason(closePrice, initialSL, Number(pos.take_profit), Number(pos.stop_loss));
           await this.supabase
             .from('positions')

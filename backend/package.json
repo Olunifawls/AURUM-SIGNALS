@@ -16,7 +16,8 @@
     "exec:demo": "ts-node --transpile-only src/execution/exec-check.ts",
     "cmd:demo": "ts-node --transpile-only src/killswitch/cmd-check.ts",
     "exit-research": "ts-node --transpile-only src/backtest/exit-research.ts",
-    "smoke:db": "node dist/smoke/db-smoke.js"
+    "smoke:db": "node dist/smoke/db-smoke.js",
+    "smoke:ai": "node dist/smoke/ai-smoke.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
